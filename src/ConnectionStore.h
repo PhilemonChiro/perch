@@ -71,6 +71,7 @@ private:
         bool folder;
         int index;
         int depth;
+        QString id; // cached so stale rows resolve after m_hosts/m_folders change
     };
 
     QString rowId(const Row& r) const;

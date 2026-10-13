@@ -151,7 +151,7 @@ QVariant ConnectionStore::data(const QModelIndex& index, int role) const
 
 QString ConnectionStore::rowId(const Row& r) const
 {
-    return r.folder ? m_folders.at(r.index).id : m_hosts.at(r.index).id;
+    return r.id;
 }
 
 void ConnectionStore::appendChildren(QList<Row>& rows, const QString& parentId, int depth) const
@@ -174,12 +174,12 @@ void ConnectionStore::appendChildren(QList<Row>& rows, const QString& parentId, 
         return byName(x.name.isEmpty() ? x.host : x.name, y.name.isEmpty() ? y.host : y.name);
     });
     for (int i : folders) {
-        rows.append({true, i, depth});
+        rows.append({true, i, depth, m_folders[i].id});
         if (m_folders[i].expanded)
             appendChildren(rows, m_folders[i].id, depth + 1);
     }
     for (int i : hosts)
-        rows.append({false, i, depth});
+        rows.append({false, i, depth, m_hosts[i].id});
 }
 
 // Rebuilds the visible rows and reports the change as one contiguous

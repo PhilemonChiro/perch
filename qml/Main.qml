@@ -18,17 +18,10 @@ ApplicationWindow {
     property int current: -1
     readonly property int sidebarW: 268
 
-    // The sidebar docks (pushing content) on Home or when the user pins it;
-    // while connected it tucks away and floats back in on a left-edge hover.
+    // Shown on Home or when the user pins it; tucked away while a session is active.
     property bool sidebarPinned: false
-    property bool edgeHover: false
-    property bool sidebarHover: false
     readonly property bool fullscreen: visibility === Window.FullScreen
     readonly property bool sidebarDocked: !fullscreen && (current < 0 || sidebarPinned)
-    readonly property bool sidebarPeek: !fullscreen && !sidebarDocked && (edgeHover || sidebarHover)
-    readonly property bool sidebarShown: sidebarDocked || sidebarPeek
-    // Back-compat alias for children that ask whether the sidebar is on screen.
-    readonly property bool sidebarOpen: sidebarShown
 
     function toast(msg, kind) { toaster.show(msg, kind) }
     function closeTab(i) { if (i >= 0) SessionManager.close(i) }
@@ -40,11 +33,7 @@ ApplicationWindow {
         target: SessionManager
         function onOpened(i) {
             win.current = i
-            // Tuck the sidebar away as soon as a session opens, even if the pointer
-            // is still over it (the hover handlers re-arm on the next enter).
-            win.sidebarPinned = false
-            win.sidebarHover = false
-            win.edgeHover = false
+            win.sidebarPinned = false // tuck the sidebar away when a session opens
         }
         function onRowsRemoved(parent, first, last) {
             const n = SessionManager.count
@@ -78,14 +67,36 @@ ApplicationWindow {
         }
     }
 
-    Item {
+    RowLayout {
         anchors.fill: parent
+        spacing: 0
 
-        // Main content. Docked sidebar pushes it right; a peeking sidebar floats over it.
+        // Sidebar docks (pushing content) on Home or when pinned; it tucks away to
+        // zero width while a session is active. Reveal it with the tab-strip button
+        // or Cmd+B — predictable, no hover-reveal over the remote desktop.
+        Sidebar {
+            id: sidebar
+            Layout.fillHeight: true
+            Layout.preferredWidth: win.sidebarDocked ? win.sidebarW : 0
+            clip: true
+            Behavior on Layout.preferredWidth { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutQuint } }
+            onConnectHost: id => SessionManager.openHost(id)
+            onEditHost: id => editor.openEdit(id)
+            onNewHost: folderId => editor.openNew(folderId)
+            onOpenPalette: palette.open()
+            onCollapse: win.sidebarPinned = false
+            onToast: (m, k) => win.toast(m, k)
+        }
+        Rectangle {
+            Layout.fillHeight: true
+            width: 1
+            color: Theme.border
+            visible: sidebar.Layout.preferredWidth > 0
+        }
+
         ColumnLayout {
-            anchors.fill: parent
-            anchors.leftMargin: win.sidebarDocked ? win.sidebarW : 0
-            Behavior on anchors.leftMargin { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutQuint } }
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             spacing: 0
 
             TabStrip {
@@ -134,59 +145,6 @@ ApplicationWindow {
                         onFullscreenRequested: win.toggleFullscreen()
                         onSaveRequested: editor.openFromSession(session)
                     }
-                }
-            }
-        }
-
-        // Thin left-edge trigger: hovering it floats the tucked-away sidebar back in.
-        Item {
-            width: 12
-            anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-            visible: !win.sidebarDocked && !win.fullscreen
-            z: 40
-            HoverHandler { onHoveredChanged: win.edgeHover = hovered }
-        }
-
-        // Sidebar overlay: docked slides flush with the content, peeking floats above it.
-        Item {
-            width: win.sidebarW + 16   // room for the floating shadow
-            anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-            x: win.sidebarShown ? 0 : -width
-            z: 50
-            Behavior on x { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutQuint } }
-            HoverHandler { onHoveredChanged: win.sidebarHover = hovered }
-
-            // Shadow, only while floating over a session.
-            Rectangle {
-                anchors { left: panel.right; top: parent.top; bottom: parent.bottom }
-                width: 16
-                opacity: win.sidebarDocked ? 0 : 1
-                Behavior on opacity { NumberAnimation { duration: Theme.normal } }
-                gradient: Gradient {
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0; color: Qt.rgba(0, 0, 0, 0.28) }
-                    GradientStop { position: 1; color: "transparent" }
-                }
-            }
-
-            Sidebar {
-                id: panel
-                width: win.sidebarW
-                anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-                clip: true
-                onConnectHost: id => SessionManager.openHost(id)
-                onEditHost: id => editor.openEdit(id)
-                onNewHost: folderId => editor.openNew(folderId)
-                onOpenPalette: palette.open()
-                onCollapse: win.sidebarPinned = false
-                onToast: (m, k) => win.toast(m, k)
-
-                // Right divider, shown when docked flush against the content.
-                Rectangle {
-                    anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
-                    width: 1
-                    color: Theme.border
-                    visible: win.sidebarDocked
                 }
             }
         }
