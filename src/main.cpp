@@ -41,7 +41,8 @@ int main(int argc, char* argv[])
 
     // Dev aid: RELAY_SCREENSHOT=out.png saves the window after startup and exits.
     if (const QString shot = qEnvironmentVariable("RELAY_SCREENSHOT"); !shot.isEmpty()) {
-        QTimer::singleShot(qEnvironmentVariableIntValue("RELAY_SCREENSHOT_DELAY") ?: 2500, [&engine, shot] {
+        const int delay = qEnvironmentVariableIntValue("RELAY_SCREENSHOT_DELAY");
+        QTimer::singleShot(delay > 0 ? delay : 2500, [&engine, shot] {
             if (auto* w = qobject_cast<QQuickWindow*>(engine.rootObjects().value(0)))
                 w->grabWindow().save(shot);
             QCoreApplication::quit();
