@@ -243,6 +243,7 @@ void ConnectionStore::load()
         h.username = o.value("username").toString();
         h.domain = o.value("domain").toString();
         h.folderId = o.value("folderId").toString();
+        h.share = o.value("share").toString();
         h.lastConnected = qint64(o.value("lastConnected").toDouble());
         m_hosts.append(h);
     }
@@ -258,6 +259,7 @@ void ConnectionStore::save() const
         hosts.append(QJsonObject{{"id", h.id}, {"name", h.name}, {"host", h.host},
                                  {"port", h.port}, {"username", h.username},
                                  {"domain", h.domain}, {"folderId", h.folderId},
+                                 {"share", h.share},
                                  {"lastConnected", double(h.lastConnected)}});
     QSaveFile f(storePath());
     if (!f.open(QIODevice::WriteOnly))
@@ -307,6 +309,7 @@ QVariantMap ConnectionStore::hostMap(const Host& h) const
             {"domain", h.domain},
             {"folderId", h.folderId},
             {"folder", folderPath(h.folderId)},
+            {"share", h.share},
             {"lastConnected", h.lastConnected}};
 }
 
@@ -350,6 +353,7 @@ QString ConnectionStore::saveHost(const QVariantMap& m)
     h.username = m.value("username").toString().trimmed();
     h.domain = m.value("domain").toString().trimmed();
     h.folderId = m.value("folderId").toString();
+    h.share = m.value("share").toString().trimmed();
     if (const int p = folderIndex(h.folderId); p >= 0)
         m_folders[p].expanded = true;
     const QString saved = h.id;

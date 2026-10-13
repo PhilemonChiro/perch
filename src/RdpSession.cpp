@@ -1,6 +1,7 @@
 #include "RdpSession.h"
 
 #include <QClipboard>
+#include <QDir>
 #include <QGuiApplication>
 #include <QPointF>
 
@@ -420,6 +421,15 @@ void RdpSession::run()
     };
     if (!m_domain.isEmpty())
         args.push_back(("/d:" + m_domain).toStdString());
+    if (!m_sharedFolder.isEmpty()) {
+        // Redirect a local folder as a drive; it shows up under "This PC" in the
+        // remote session. Label it with the folder's name, falling back to "Relay".
+        QString label = QDir(m_sharedFolder).dirName();
+        if (label.isEmpty())
+            label = QStringLiteral("Relay");
+        label.replace(',', ' '); // commas separate the /drive: fields
+        args.push_back(("/drive:" + label + "," + m_sharedFolder).toStdString());
+    }
     std::vector<char*> argv;
     for (std::string& a : args)
         argv.push_back(a.data());

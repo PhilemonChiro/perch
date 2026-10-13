@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Effects
 import QtQuick.Layouts
 import Relay
@@ -24,9 +25,11 @@ Popup {
     property string folderId: ""
     readonly property bool editing: editId !== ""
     property var folderChoices: []
+    property string sharePath: ""
 
     function reset() {
         nameF.text = ""; hostF.text = ""; portF.text = "3389"; userF.text = ""; domainF.text = ""; passF.text = ""
+        sharePath = ""
         hostF.error = false
         folderChoices = [{ id: "", name: qsTr("No folder"), depth: 0 }].concat(ConnectionStore.folders())
     }
@@ -44,6 +47,7 @@ Popup {
         editId = id; reset()
         nameF.text = h.name === h.host ? "" : h.name
         hostF.text = h.host; portF.text = String(h.port); userF.text = h.username; domainF.text = h.domain
+        sharePath = h.share || ""
         selectFolder(h.folderId)
         open()
     }
@@ -56,7 +60,7 @@ Popup {
         if (!hostF.text.trim()) { hostF.error = true; shake.restart(); hostF.focusInput(); return }
         const id = ConnectionStore.saveHost({
             id: editId, name: nameF.text, host: hostF.text, port: parseInt(portF.text) || 3389,
-            username: userF.text, domain: domainF.text,
+            username: userF.text, domain: domainF.text, share: sharePath,
             folderId: folderChoices[folderBox.currentIndex] ? folderChoices[folderBox.currentIndex].id : ""
         })
         const pass = passF.text
@@ -243,7 +247,64 @@ Popup {
                         }
                     }
                 }
+
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 4 }
+                Text { text: qsTr("FILE SHARING"); color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold; font.letterSpacing: 0.8 }
+
+                Column {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Text { text: qsTr("Shared folder"); color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.Medium }
+                    AbstractButton {
+                        id: shareBtn
+                        width: parent.width
+                        implicitHeight: 38
+                        hoverEnabled: true
+                        focusPolicy: Qt.NoFocus
+                        onClicked: folderDialog.open()
+                        scale: pressed ? 0.99 : 1
+                        Behavior on scale { NumberAnimation { duration: Theme.fast } }
+                        background: Rectangle {
+                            radius: Theme.radius
+                            color: Theme.surface2
+                            border.color: shareBtn.hovered ? Theme.borderStrong : Theme.border
+                            Behavior on border.color { ColorAnimation { duration: Theme.fast } }
+                        }
+                        contentItem: RowLayout {
+                            spacing: 8
+                            Icon { Layout.leftMargin: 12; name: "folder"; size: 15; color: root.sharePath ? Theme.accent : Theme.textFaint }
+                            Text {
+                                Layout.fillWidth: true
+                                text: root.sharePath || qsTr("Choose a folder to share…")
+                                color: root.sharePath ? Theme.text : Theme.textFaint
+                                elide: Text.ElideMiddle
+                                font.pixelSize: Theme.fontMd
+                            }
+                            IconButton {
+                                visible: root.sharePath !== ""
+                                iconName: "x"; iconSize: 12; implicitWidth: 26; implicitHeight: 26
+                                Layout.rightMargin: 6
+                                tip: qsTr("Stop sharing")
+                                onClicked: root.sharePath = ""
+                            }
+                        }
+                    }
+                    Text {
+                        width: parent.width
+                        text: qsTr("Appears inside the session under “This PC”. Drag files in or out to transfer them.")
+                        color: Theme.textFaint
+                        font.pixelSize: Theme.fontXs
+                        wrapMode: Text.WordWrap
+                        lineHeight: 1.3
+                    }
+                }
             }
+        }
+
+        FolderDialog {
+            id: folderDialog
+            title: qsTr("Choose a folder to share")
+            onAccepted: root.sharePath = ConnectionStore.toLocalPath(selectedFolder)
         }
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }

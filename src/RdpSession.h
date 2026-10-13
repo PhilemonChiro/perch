@@ -65,6 +65,8 @@ public:
 
     void startWithPassword(const QString& password);
     void requestCredentials(const QString& error);
+    // Local folder shared into the session as a redirected drive (empty = none).
+    void setSharedFolder(const QString& path) { m_sharedFolder = path; }
 
     Q_INVOKABLE void signIn(const QString& username, const QString& password, const QString& domain,
                             bool remember);
@@ -123,7 +125,7 @@ private:
     const int m_port;
 
     // GUI-thread state.
-    QString m_username, m_domain, m_password;
+    QString m_username, m_domain, m_password, m_sharedFolder;
     bool m_remember = false;
     State m_state = Idle;
     QString m_statusText, m_errorText;

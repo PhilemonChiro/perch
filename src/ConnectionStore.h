@@ -2,6 +2,7 @@
 
 #include <QAbstractListModel>
 #include <QQmlEngine>
+#include <QUrl>
 
 // Saved connections: a tree of folders and hosts, persisted as JSON and
 // exposed to QML as a flattened list of the currently visible rows.
@@ -48,6 +49,8 @@ public:
     Q_INVOKABLE QVariantList recent(int limit = 6) const;
     Q_INVOKABLE QVariantList folders() const;
     Q_INVOKABLE void touch(const QString& id);
+    // Converts a file:// URL (e.g. from a folder picker) to a native local path.
+    Q_INVOKABLE QString toLocalPath(const QUrl& url) const { return url.toLocalFile(); }
 
 signals:
     void changed();
@@ -60,7 +63,7 @@ private:
         bool expanded = true;
     };
     struct Host {
-        QString id, name, host, username, domain, folderId;
+        QString id, name, host, username, domain, folderId, share;
         int port = 3389;
         qint64 lastConnected = 0;
     };
