@@ -53,6 +53,12 @@ qt_add_qml_module(relay
 
 target_include_directories(relay PRIVATE src)
 
+# WinPR/FreeRDP headers pull in <windows.h>; NOMINMAX keeps its min/max macros
+# from clobbering std::min/std::max. WIN32_LEAN_AND_MEAN trims the include.
+if(WIN32)
+    target_compile_definitions(relay PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
+
 target_link_libraries(relay PRIVATE
     Qt6::Gui Qt6::Quick Qt6::QuickControls2
     Qt6Keychain::Qt6Keychain
