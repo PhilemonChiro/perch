@@ -88,9 +88,15 @@ struct RdpCallbacks {
 
     // Credentials are collected by the UI before connecting; if the server
     // still asks, fail so the UI can prompt with an error.
-    static BOOL authenticate(freerdp*, char** username, char** password, char**, rdp_auth_reason)
+    static BOOL authenticate(freerdp* instance, char** username, char** password, char**,
+                             rdp_auth_reason)
     {
-        return username && *username && **username && password && *password ? TRUE : FALSE;
+        const bool ok = username && *username && **username && password && *password;
+        if (!ok)
+            // Reaching the auth stage proves the host is reachable; record that so a
+            // missing-credentials abort isn't misreported as a connectivity failure.
+            selfOf(instance->context)->m_credentialsNeeded = true;
+        return ok ? TRUE : FALSE;
     }
 
     static DWORD verifyCertificate(freerdp* instance, const char* host, UINT16 port, const char*,
@@ -436,6 +442,7 @@ void RdpSession::run()
         m_context = ctx;
     }
     ResetEvent(m_wakeEvent);
+    m_credentialsNeeded = false;
     freerdp_client_start(ctx);
 
     freerdp* instance = ctx->instance;
@@ -445,11 +452,13 @@ void RdpSession::run()
         const UINT32 err = freerdp_get_last_error(ctx);
         const bool aborted = m_stop;
         const bool hadPassword = !m_password.isEmpty();
-        post([this, err, aborted, hadPassword] {
+        const bool credentialsNeeded = m_credentialsNeeded;
+        post([this, err, aborted, hadPassword, credentialsNeeded] {
             if (aborted) {
                 setStatus(tr("Connection cancelled."), 0);
                 setState(Disconnected);
-            } else if (isAuthError(err) || (err == FREERDP_ERROR_CONNECT_CANCELLED && !hadPassword)) {
+            } else if (isAuthError(err) || credentialsNeeded
+                       || (err == FREERDP_ERROR_CONNECT_CANCELLED && !hadPassword)) {
                 requestCredentials(hadPassword ? tr("The username or password is incorrect.")
                                                : QString());
             } else if (err == FREERDP_ERROR_CONNECT_PASSWORD_EXPIRED

@@ -136,6 +136,7 @@ private:
     // Worker.
     std::thread m_thread;
     std::atomic<bool> m_stop{false};
+    std::atomic<bool> m_credentialsNeeded{false};
     std::atomic<bool> m_framePending{false};
     std::atomic<bool> m_live{false};
     rdp_context* m_context = nullptr;
