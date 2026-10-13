@@ -16,7 +16,19 @@ ApplicationWindow {
 
     // -1 shows Home; otherwise the index of the active session tab.
     property int current: -1
-    property bool sidebarOpen: true
+    readonly property int sidebarW: 268
+
+    // The sidebar docks (pushing content) on Home or when the user pins it;
+    // while connected it tucks away and floats back in on a left-edge hover.
+    property bool sidebarPinned: false
+    property bool edgeHover: false
+    property bool sidebarHover: false
+    readonly property bool fullscreen: visibility === Window.FullScreen
+    readonly property bool sidebarDocked: !fullscreen && (current < 0 || sidebarPinned)
+    readonly property bool sidebarPeek: !fullscreen && !sidebarDocked && (edgeHover || sidebarHover)
+    readonly property bool sidebarShown: sidebarDocked || sidebarPeek
+    // Back-compat alias for children that ask whether the sidebar is on screen.
+    readonly property bool sidebarOpen: sidebarShown
 
     function toast(msg, kind) { toaster.show(msg, kind) }
     function closeTab(i) { if (i >= 0) SessionManager.close(i) }
@@ -37,7 +49,7 @@ ApplicationWindow {
     Shortcut { sequences: [Theme.seq("K"), Theme.seq("T")]; context: Qt.ApplicationShortcut; onActivated: palette.toggle() }
     Shortcut { sequence: Theme.seq("N"); context: Qt.ApplicationShortcut; onActivated: editor.openNew("") }
     Shortcut { sequence: Theme.seq("W"); context: Qt.ApplicationShortcut; onActivated: win.closeTab(win.current) }
-    Shortcut { sequence: Theme.seq("B"); context: Qt.ApplicationShortcut; onActivated: win.sidebarOpen = !win.sidebarOpen }
+    Shortcut { sequence: Theme.seq("B"); context: Qt.ApplicationShortcut; onActivated: win.sidebarPinned = !win.sidebarPinned }
     Shortcut { sequence: Theme.seq("Return"); context: Qt.ApplicationShortcut; onActivated: win.toggleFullscreen() }
     Shortcut {
         sequence: Theme.seq("]"); context: Qt.ApplicationShortcut
@@ -59,43 +71,24 @@ ApplicationWindow {
         }
     }
 
-    RowLayout {
+    Item {
         anchors.fill: parent
-        spacing: 0
 
-        Sidebar {
-            id: sidebar
-            Layout.fillHeight: true
-            Layout.preferredWidth: win.sidebarOpen && win.visibility !== Window.FullScreen ? 268 : 0
-            clip: true
-            Behavior on Layout.preferredWidth { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutQuint } }
-            onConnectHost: id => SessionManager.openHost(id)
-            onEditHost: id => editor.openEdit(id)
-            onNewHost: folderId => editor.openNew(folderId)
-            onOpenPalette: palette.open()
-            onCollapse: win.sidebarOpen = false
-            onToast: (m, k) => win.toast(m, k)
-        }
-        Rectangle {
-            Layout.fillHeight: true
-            width: 1
-            color: Theme.border
-            visible: sidebar.Layout.preferredWidth > 0
-        }
-
+        // Main content. Docked sidebar pushes it right; a peeking sidebar floats over it.
         ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+            anchors.fill: parent
+            anchors.leftMargin: win.sidebarDocked ? win.sidebarW : 0
+            Behavior on anchors.leftMargin { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutQuint } }
             spacing: 0
 
             TabStrip {
                 Layout.fillWidth: true
-                visible: win.visibility !== Window.FullScreen
+                visible: !win.fullscreen
                 current: win.current
-                sidebarOpen: win.sidebarOpen
+                sidebarOpen: win.sidebarDocked
                 onSelect: i => win.current = i
                 onCloseTab: i => win.closeTab(i)
-                onShowSidebar: win.sidebarOpen = true
+                onShowSidebar: win.sidebarPinned = true
                 onNewTab: palette.open()
             }
 
@@ -137,6 +130,59 @@ ApplicationWindow {
                 }
             }
         }
+
+        // Thin left-edge trigger: hovering it floats the tucked-away sidebar back in.
+        Item {
+            width: 12
+            anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+            visible: !win.sidebarDocked && !win.fullscreen
+            z: 40
+            HoverHandler { onHoveredChanged: win.edgeHover = hovered }
+        }
+
+        // Sidebar overlay: docked slides flush with the content, peeking floats above it.
+        Item {
+            width: win.sidebarW + 16   // room for the floating shadow
+            anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+            x: win.sidebarShown ? 0 : -width
+            z: 50
+            Behavior on x { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutQuint } }
+            HoverHandler { onHoveredChanged: win.sidebarHover = hovered }
+
+            // Shadow, only while floating over a session.
+            Rectangle {
+                anchors { left: panel.right; top: parent.top; bottom: parent.bottom }
+                width: 16
+                opacity: win.sidebarDocked ? 0 : 1
+                Behavior on opacity { NumberAnimation { duration: Theme.normal } }
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0; color: Qt.rgba(0, 0, 0, 0.28) }
+                    GradientStop { position: 1; color: "transparent" }
+                }
+            }
+
+            Sidebar {
+                id: panel
+                width: win.sidebarW
+                anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+                clip: true
+                onConnectHost: id => SessionManager.openHost(id)
+                onEditHost: id => editor.openEdit(id)
+                onNewHost: folderId => editor.openNew(folderId)
+                onOpenPalette: palette.open()
+                onCollapse: win.sidebarPinned = false
+                onToast: (m, k) => win.toast(m, k)
+
+                // Right divider, shown when docked flush against the content.
+                Rectangle {
+                    anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                    width: 1
+                    color: Theme.border
+                    visible: win.sidebarDocked
+                }
+            }
+        }
     }
 
     CommandPalette {
@@ -146,7 +192,7 @@ ApplicationWindow {
             if (SessionManager.quickConnect(text) < 0) win.toast(qsTr("That doesn’t look like a host address"), "error")
         }
         onNewHost: editor.openNew("")
-        onNewFolder: { ConnectionStore.addFolder(qsTr("New folder"), ""); win.sidebarOpen = true }
+        onNewFolder: { ConnectionStore.addFolder(qsTr("New folder"), ""); win.sidebarPinned = true }
         onGoHome: win.current = -1
         onToggleTheme: Theme.mode = Theme.dark ? "light" : "dark"
     }
