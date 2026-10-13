@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QPointF>
+#include <QTimer>
 
 #include <freerdp/client.h>
 #include <freerdp/client/channels.h>
@@ -308,12 +309,22 @@ void RdpSession::shareFolder(const QString& path)
         return;
     m_sharedFolder = path;
     emit sharedFolderChanged();
-    // Reconnect to renegotiate redirection; reuse the in-memory credentials so
-    // the user isn't prompted again. If we somehow lack them, fall back to a prompt.
-    if (!m_username.isEmpty() && !m_password.isEmpty())
-        start();
-    else
+    if (m_username.isEmpty() || m_password.isEmpty()) {
         requestCredentials(QString());
+        return;
+    }
+    // RDP negotiates drive redirection at connect time, so we must reconnect.
+    // On a live session, disconnect cleanly first and let the server release the
+    // session; the worker's teardown then restarts the connection (m_restartPending).
+    // A dead session can reconnect straight away.
+    if (m_thread.joinable()) {
+        m_restartPending = true;
+        setStatus(tr("Reconnecting to apply the shared folder…"), 0);
+        setState(Connecting);
+        disconnect();
+    } else {
+        start();
+    }
 }
 
 void RdpSession::requestCredentials(const QString& error)
@@ -533,6 +544,14 @@ void RdpSession::run()
         const UINT32 info = freerdp_error_info(instance);
         const bool byUser = m_stop;
         post([this, info, byUser] {
+            if (m_restartPending) {
+                // Give the server a moment to release the old session before
+                // reconnecting (an immediate reconnect is often refused).
+                m_restartPending = false;
+                setState(Connecting);
+                QTimer::singleShot(1400, this, [this] { start(); });
+                return;
+            }
             QString msg;
             if (byUser)
                 msg = tr("You disconnected from %1.").arg(m_title);

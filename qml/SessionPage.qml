@@ -35,7 +35,10 @@ Item {
     readonly property bool live: st === RdpSession.Connected && sessionObj.hasFrame
     readonly property bool certPending: sessionObj && sessionObj.certificate.fingerprint !== undefined
 
-    onLiveChanged: if (live && active) view.forceActiveFocus()
+    onLiveChanged: {
+        if (live && active) view.forceActiveFocus()
+        if (live) { hotZone.introReveal = true; introTimer.restart() }
+    }
     onActiveChanged: if (active && live) view.forceActiveFocus()
 
     // Backdrop shown until the first frame arrives.
@@ -59,17 +62,42 @@ Item {
         }
     }
 
-    // Floating session toolbar: slides down when the pointer nears the top edge.
+    // Floating session toolbar: auto-reveals on connect, then slides up; a faint
+    // grab handle at the top invites hovering to bring it back.
     Rectangle {
         id: hotZone
         anchors.top: parent.top
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.max(toolbar.width + 80, 360)
-        height: toolbarShown ? toolbar.height + 24 : 10
+        height: toolbarShown ? toolbar.height + 24 : 22
         color: "transparent"
         visible: page.live
-        property bool toolbarShown: zoneHover.hovered || toolbarHover.hovered
+        property bool introReveal: false
+        property bool toolbarShown: zoneHover.hovered || toolbarHover.hovered || introReveal
         HoverHandler { id: zoneHover }
+    }
+
+    // Brief auto-reveal when the session becomes live, so the toolbar is discoverable.
+    Timer { id: introTimer; interval: 2800; onTriggered: hotZone.introReveal = false }
+
+    // Always-visible grab handle hinting the toolbar is up there.
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: 7
+        width: 42; height: 5; radius: 3
+        visible: page.live && toolbar.y < 0
+        opacity: zoneHover.hovered ? 0.9 : 0.4
+        color: Theme.textFaint
+        Behavior on opacity { NumberAnimation { duration: Theme.normal } }
+    }
+
+    // Elevation under the toolbar, following its slide.
+    RectangularShadow {
+        anchors.fill: toolbar
+        radius: toolbar.radius
+        visible: toolbar.visible
+        blur: 30; offset.y: 8; spread: 0
+        color: Qt.rgba(0, 0, 0, Theme.dark ? 0.55 : 0.18)
     }
     Rectangle {
         id: toolbar
@@ -80,7 +108,7 @@ Item {
         width: tbRow.implicitWidth + 16
         height: 40
         radius: 20
-        color: Qt.rgba(Theme.surface2.r, Theme.surface2.g, Theme.surface2.b, 0.94)
+        color: Qt.rgba(Theme.surface2.r, Theme.surface2.g, Theme.surface2.b, Theme.dark ? 0.99 : 0.98)
         border.color: Theme.borderStrong
         HoverHandler { id: toolbarHover }
         RowLayout {
