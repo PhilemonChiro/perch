@@ -38,7 +38,14 @@ ApplicationWindow {
 
     Connections {
         target: SessionManager
-        function onOpened(i) { win.current = i }
+        function onOpened(i) {
+            win.current = i
+            // Tuck the sidebar away as soon as a session opens, even if the pointer
+            // is still over it (the hover handlers re-arm on the next enter).
+            win.sidebarPinned = false
+            win.sidebarHover = false
+            win.edgeHover = false
+        }
         function onRowsRemoved(parent, first, last) {
             const n = SessionManager.count
             if (win.current > last) win.current -= (last - first + 1)

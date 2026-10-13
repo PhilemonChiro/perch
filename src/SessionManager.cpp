@@ -109,6 +109,25 @@ int SessionManager::openHost(const QString& hostId)
     return row;
 }
 
+int SessionManager::openHostWithPassword(const QString& hostId, const QString& password)
+{
+    if (const int open = indexOfHost(hostId); open >= 0) {
+        RdpSession* s = m_sessions.at(open);
+        s->startWithPassword(password);
+        emit opened(open);
+        return open;
+    }
+    const QVariantMap h = ConnectionStore::instance()->host(hostId);
+    if (h.isEmpty())
+        return -1;
+    auto* s = new RdpSession(hostId, h.value("name").toString(), h.value("host").toString(),
+                             h.value("port").toInt(), h.value("username").toString(),
+                             h.value("domain").toString(), this);
+    const int row = add(s);
+    s->startWithPassword(password);
+    return row;
+}
+
 int SessionManager::quickConnect(const QString& text)
 {
     static const QRegularExpression re(

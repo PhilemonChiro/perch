@@ -59,9 +59,17 @@ Popup {
             username: userF.text, domain: domainF.text,
             folderId: folderChoices[folderBox.currentIndex] ? folderChoices[folderBox.currentIndex].id : ""
         })
-        if (passF.text) SessionManager.storePassword(id, passF.text)
+        const pass = passF.text
+        if (pass) SessionManager.storePassword(id, pass)
         close()
-        saved(nameF.text || hostF.text, connect, id)
+        if (connect && pass) {
+            // Connect with the password we just captured; the keychain write above
+            // is async and a plain openHost() would race it and fall back to a prompt.
+            SessionManager.openHostWithPassword(id, pass)
+            saved(nameF.text || hostF.text, false, id)
+        } else {
+            saved(nameF.text || hostF.text, connect, id)
+        }
     }
 
     onOpened: (editing ? nameF : hostF).focusInput()
