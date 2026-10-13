@@ -51,6 +51,8 @@ public:
     Q_INVOKABLE void touch(const QString& id);
     // Converts a file:// URL (e.g. from a folder picker) to a native local path.
     Q_INVOKABLE QString toLocalPath(const QUrl& url) const { return url.toLocalFile(); }
+    // Persists a host's shared folder (used when it's changed mid-session).
+    Q_INVOKABLE void setShare(const QString& id, const QString& path);
 
 signals:
     void changed();

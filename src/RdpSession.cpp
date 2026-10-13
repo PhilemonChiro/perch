@@ -302,6 +302,20 @@ void RdpSession::startWithPassword(const QString& password)
     start();
 }
 
+void RdpSession::shareFolder(const QString& path)
+{
+    if (m_sharedFolder == path)
+        return;
+    m_sharedFolder = path;
+    emit sharedFolderChanged();
+    // Reconnect to renegotiate redirection; reuse the in-memory credentials so
+    // the user isn't prompted again. If we somehow lack them, fall back to a prompt.
+    if (!m_username.isEmpty() && !m_password.isEmpty())
+        start();
+    else
+        requestCredentials(QString());
+}
+
 void RdpSession::requestCredentials(const QString& error)
 {
     m_errorText = error;

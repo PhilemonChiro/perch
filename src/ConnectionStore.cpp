@@ -362,6 +362,15 @@ QString ConnectionStore::saveHost(const QVariantMap& m)
     return saved;
 }
 
+void ConnectionStore::setShare(const QString& id, const QString& path)
+{
+    const int i = hostIndex(id);
+    if (i < 0 || m_hosts[i].share == path.trimmed())
+        return;
+    m_hosts[i].share = path.trimmed();
+    save();
+}
+
 void ConnectionStore::remove(const QString& id)
 {
     if (const int i = hostIndex(id); i >= 0) {

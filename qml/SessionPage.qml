@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Effects
 import QtQuick.Layouts
 import Relay
@@ -12,6 +13,23 @@ Item {
     signal closeRequested()
     signal fullscreenRequested()
     signal saveRequested()
+    signal toast(string message, string kind)
+
+    function folderName(path) {
+        if (!path) return ""
+        const p = path.replace(/[\/\\]+$/, "")
+        const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"))
+        return i >= 0 ? p.substring(i + 1) : p
+    }
+    // Mount (or change) the shared folder on the live session, persist it, reconnect.
+    function applyShare(path) {
+        if (!sessionObj) return
+        sessionObj.shareFolder(path)
+        if (sessionObj.hostId !== "")
+            ConnectionStore.setShare(sessionObj.hostId, path)
+        page.toast(path ? qsTr("Mounting “%1”…").arg(folderName(path))
+                        : qsTr("Unmounting shared folder…"), "info")
+    }
 
     readonly property int st: sessionObj ? sessionObj.state : 0
     readonly property bool live: st === RdpSession.Connected && sessionObj.hasFrame
@@ -87,12 +105,63 @@ Item {
             Rectangle { width: 1; height: 16; color: Theme.border }
             IconButton { iconName: "expand"; iconSize: 14; tip: qsTr("Full screen  %1↵").arg(Theme.modLabel); onClicked: page.fullscreenRequested() }
             IconButton {
+                id: mountBtn
+                iconName: "folder"; iconSize: 14
+                readonly property string shared: page.sessionObj ? page.sessionObj.sharedFolder : ""
+                checked: shared !== ""
+                tip: shared !== "" ? qsTr("Sharing “%1” — click to change").arg(page.folderName(shared))
+                                   : qsTr("Share a folder into this session")
+                onClicked: shared !== "" ? mountMenu.popup() : folderDialog.open()
+                // Accent dot marking an active mount.
+                Rectangle {
+                    visible: mountBtn.checked
+                    width: 6; height: 6; radius: 3
+                    color: Theme.accent
+                    anchors { right: parent.right; top: parent.top; rightMargin: 4; topMargin: 4 }
+                    SequentialAnimation on opacity {
+                        running: mountBtn.checked; loops: Animation.Infinite
+                        NumberAnimation { to: 0.4; duration: 1100; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 1; duration: 1100; easing.type: Easing.InOutSine }
+                    }
+                }
+            }
+            IconButton {
                 visible: page.sessionObj && page.sessionObj.hostId === ""
                 iconName: "plus"; iconSize: 14; tip: qsTr("Save connection")
                 onClicked: page.saveRequested()
             }
             IconButton { iconName: "power"; iconSize: 14; danger: true; tip: qsTr("Disconnect"); onClicked: page.sessionObj.disconnect() }
         }
+    }
+
+    FolderDialog {
+        id: folderDialog
+        title: qsTr("Share a folder into this session")
+        onAccepted: page.applyShare(ConnectionStore.toLocalPath(selectedFolder))
+    }
+
+    Menu {
+        id: mountMenu
+        padding: 6
+        background: Rectangle { implicitWidth: 220; radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+        enter: Transition { ParallelAnimation {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.fast }
+            NumberAnimation { property: "scale"; from: 0.95; to: 1; duration: Theme.normal; easing.type: Theme.easing } } }
+        exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 80 } }
+        delegate: MenuItem {
+            id: mmi
+            implicitHeight: 30
+            readonly property bool danger: text === qsTr("Unmount folder")
+            contentItem: Text {
+                leftPadding: 4; text: mmi.text
+                color: mmi.danger ? Theme.danger : Theme.text
+                font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter
+            }
+            background: Rectangle { radius: Theme.radiusSm; color: mmi.highlighted ? (mmi.danger ? Theme.dangerSoft : Theme.surface3) : "transparent" }
+        }
+        Action { text: qsTr("Change folder…"); onTriggered: folderDialog.open() }
+        MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: Theme.border } }
+        Action { text: qsTr("Unmount folder"); onTriggered: page.applyShare("") }
     }
 
     // Overlay layer for every non-live state.

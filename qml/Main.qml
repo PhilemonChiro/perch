@@ -144,6 +144,7 @@ ApplicationWindow {
                         onCloseRequested: win.closeTab(index)
                         onFullscreenRequested: win.toggleFullscreen()
                         onSaveRequested: editor.openFromSession(session)
+                        onToast: (m, k) => win.toast(m, k)
                     }
                 }
             }

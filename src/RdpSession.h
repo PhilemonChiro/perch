@@ -40,6 +40,7 @@ class RdpSession : public QObject
     Q_PROPERTY(QSize remoteSize READ remoteSize NOTIFY remoteSizeChanged)
     Q_PROPERTY(bool hasFrame READ hasFrame NOTIFY hasFrameChanged)
     Q_PROPERTY(QVariantMap certificate READ certificate NOTIFY certificateChanged)
+    Q_PROPERTY(QString sharedFolder READ sharedFolder NOTIFY sharedFolderChanged)
 
 public:
     enum State { Idle, NeedsCredentials, Connecting, VerifyingCertificate, Connected, Disconnected, Failed };
@@ -62,11 +63,16 @@ public:
     QSize remoteSize() const { return m_remoteSize; }
     bool hasFrame() const { return m_hasFrame; }
     QVariantMap certificate() const { return m_certificate; }
+    QString sharedFolder() const { return m_sharedFolder; }
 
     void startWithPassword(const QString& password);
     void requestCredentials(const QString& error);
     // Local folder shared into the session as a redirected drive (empty = none).
-    void setSharedFolder(const QString& path) { m_sharedFolder = path; }
+    // Set before the first connect; use shareFolder() to change it live.
+    void setSharedFolder(const QString& path) { m_sharedFolder = path; emit sharedFolderChanged(); }
+    // Change the shared folder on a live session and reconnect to apply it (RDP
+    // negotiates drive redirection at connect time). Credentials are reused.
+    Q_INVOKABLE void shareFolder(const QString& path);
 
     Q_INVOKABLE void signIn(const QString& username, const QString& password, const QString& domain,
                             bool remember);
@@ -90,6 +96,7 @@ signals:
     void remoteSizeChanged();
     void hasFrameChanged();
     void certificateChanged();
+    void sharedFolderChanged();
     void frameUpdated();
     void connectedWithCredentials(const QString& username, const QString& domain,
                                   const QString& password, bool remember);
