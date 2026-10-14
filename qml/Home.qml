@@ -300,28 +300,49 @@ Item {
         Behavior on scale { NumberAnimation { duration: Theme.fast } }
         background: Rectangle {
             radius: Theme.radiusLg
-            color: nc.hovered ? Theme.accentSoft : "transparent"
-            border.color: nc.hovered ? Theme.accent : Theme.borderStrong
-            border.width: 1
-            Behavior on color { ColorAnimation { duration: Theme.normal } }
+            color: Theme.surface
+            border.color: nc.hovered ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.55) : Theme.border
             Behavior on border.color { ColorAnimation { duration: Theme.normal } }
         }
-        contentItem: Column {
-            spacing: 8
-            anchors.centerIn: parent
-            Icon {
-                anchors.horizontalCenter: parent.horizontalCenter
-                name: "plus"; size: 18
-                color: nc.hovered ? Theme.accent : Theme.textDim
-                rotation: nc.hovered ? 90 : 0
-                Behavior on rotation { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutBack } }
+        contentItem: ColumnLayout {
+            spacing: 4
+            RowLayout {
+                Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 14
+                spacing: 10
+                Rectangle {
+                    width: 30; height: 30; radius: 9
+                    color: nc.hovered ? Theme.accent : Theme.accentSoft
+                    Behavior on color { ColorAnimation { duration: Theme.normal } }
+                    Icon {
+                        anchors.centerIn: parent
+                        name: "plus"; size: 16
+                        color: nc.hovered ? Theme.accentInk : Theme.accent
+                        rotation: nc.hovered ? 90 : 0
+                        Behavior on rotation { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutBack } }
+                        Behavior on color { ColorAnimation { duration: Theme.normal } }
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                Text {
+                    text: Theme.modLabel + "N"
+                    color: Theme.textFaint
+                    font.pixelSize: Theme.fontXs
+                    opacity: nc.hovered ? 1 : 0.6
+                }
             }
             Text {
-                anchors.horizontalCenter: parent.horizontalCenter
+                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 4
                 text: qsTr("New connection")
-                color: nc.hovered ? Theme.accent : Theme.textDim
+                color: Theme.text
                 font.pixelSize: Theme.fontMd
-                font.weight: Font.Medium
+                font.weight: Font.DemiBold
+            }
+            Text {
+                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.bottomMargin: 12
+                text: qsTr("Add a server to connect fast")
+                color: Theme.textFaint
+                elide: Text.ElideRight
+                font.pixelSize: Theme.fontSm
             }
         }
     }
