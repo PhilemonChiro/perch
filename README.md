@@ -107,4 +107,4 @@ and multi-monitor are on the roadmap.
 
 ## License
 
-Copyright © Philemon Chiro. All rights reserved.
+Released under the [MIT License](LICENSE). Copyright © 2026 Philemon Chiro.
