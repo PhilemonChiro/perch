@@ -28,26 +28,17 @@ Rectangle {
             Layout.rightMargin: 10
             spacing: 10
 
-            Rectangle {
+            Icon {
                 id: mark
-                width: 26; height: 26; radius: 8
-                gradient: Gradient {
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0; color: Theme.accent }
-                    GradientStop { position: 1; color: Theme.accent2 }
-                }
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: 10; height: 10; radius: 3
-                    color: "transparent"
-                    border.color: "white"; border.width: 2
-                    rotation: brandHover.hovered ? 135 : 45
-                    Behavior on rotation { NumberAnimation { duration: 600; easing.type: Easing.OutBack } }
-                }
+                name: "brand"
+                color: Theme.text
+                size: 30
+                scale: brandHover.hovered ? 1.07 : 1
+                Behavior on scale { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutBack } }
                 HoverHandler { id: brandHover }
             }
             Text {
-                text: "Relay"
+                text: "Perch"
                 color: Theme.text
                 font.pixelSize: Theme.fontLg
                 font.weight: Font.Bold

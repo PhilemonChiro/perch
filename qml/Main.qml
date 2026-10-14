@@ -10,7 +10,7 @@ ApplicationWindow {
     minimumWidth: 900
     minimumHeight: 560
     visible: true
-    title: current >= 0 && SessionManager.at(current) ? SessionManager.at(current).title + " — Relay" : "Relay"
+    title: current >= 0 && SessionManager.at(current) ? SessionManager.at(current).title + " — Perch" : "Perch"
     color: Theme.bg
     font.family: Theme.fontFamily
 
