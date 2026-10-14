@@ -84,8 +84,13 @@ jobs:
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
-          macdeployqt build/Perch.app -qmldir=qml -dmg
-          mv build/Perch.dmg Perch-macos.dmg
+          macdeployqt build/Perch.app -qmldir=qml
+          # Re-sign ad-hoc after macdeployqt's dylib-path rewrites, or the app
+          # SIGKILLs on launch ("Code Signature Invalid") on other Macs.
+          codesign --remove-signature build/Perch.app 2>/dev/null || true
+          codesign --force --deep --sign - build/Perch.app
+          codesign --verify --deep --strict build/Perch.app
+          hdiutil create -volname Perch -srcfolder build/Perch.app -ov -format UDZO Perch-macos.dmg
 
       - name: Package (Windows)
         if: runner.os == 'Windows'

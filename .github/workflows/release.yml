@@ -84,9 +84,57 @@ jobs:
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: |
-          macdeployqt build/Perch.app -qmldir=qml -dmg
-          mv build/Perch.dmg Perch-macOS.dmg
+          set -euo pipefail
+          # macdeployqt rewrites dylib load paths in the Mach-O binaries after
+          # the linker's ad-hoc signature, invalidating it (SIGKILL "Code
+          # Signature Invalid" on launch). Run it first, then (re)sign the
+          # finished bundle so every page hash matches the shipped content.
+          macdeployqt build/Perch.app -qmldir=qml
+
+          if [ -n "${MACOS_SIGN_IDENTITY:-}" ] && [ -n "${MACOS_CERT_P12:-}" ]; then
+            echo "Signing with Developer ID + notarizing."
+            # Import the Developer ID Application cert into a throwaway keychain.
+            KCPASS=$(uuidgen)
+            echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security create-keychain -p "$KCPASS" build.keychain
+            security set-keychain-settings -lut 21600 build.keychain
+            security unlock-keychain -p "$KCPASS" build.keychain
+            security import "$RUNNER_TEMP/cert.p12" -k build.keychain \
+              -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple:,codesign: \
+              -s -k "$KCPASS" build.keychain
+            security list-keychains -d user -s build.keychain login.keychain-db
+            rm -f "$RUNNER_TEMP/cert.p12"
+
+            # Hardened runtime (--options runtime) and a secure --timestamp are
+            # both required for notarization to pass.
+            codesign --force --deep --options runtime --timestamp \
+              --sign "$MACOS_SIGN_IDENTITY" build/Perch.app
+            codesign --verify --deep --strict build/Perch.app
+
+            hdiutil create -volname Perch -srcfolder build/Perch.app -ov -format UDZO Perch-macOS.dmg
+
+            xcrun notarytool submit Perch-macOS.dmg \
+              --apple-id "$MACOS_NOTARY_APPLE_ID" \
+              --team-id "$MACOS_NOTARY_TEAM_ID" \
+              --password "$MACOS_NOTARY_PASSWORD" --wait
+            # Staple the ticket so the app validates offline / on first launch.
+            xcrun stapler staple Perch-macOS.dmg
+          else
+            echo "No Developer ID secrets; ad-hoc signing (Gatekeeper will warn)."
+            codesign --remove-signature build/Perch.app 2>/dev/null || true
+            codesign --force --deep --sign - build/Perch.app
+            codesign --verify --deep --strict build/Perch.app
+            hdiutil create -volname Perch -srcfolder build/Perch.app -ov -format UDZO Perch-macOS.dmg
+          fi
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
