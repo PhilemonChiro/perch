@@ -41,6 +41,7 @@ class RdpSession : public QObject
     Q_PROPERTY(bool hasFrame READ hasFrame NOTIFY hasFrameChanged)
     Q_PROPERTY(QVariantMap certificate READ certificate NOTIFY certificateChanged)
     Q_PROPERTY(QString sharedFolder READ sharedFolder NOTIFY sharedFolderChanged)
+    Q_PROPERTY(bool remounting READ remounting NOTIFY remountingChanged)
 
 public:
     enum State { Idle, NeedsCredentials, Connecting, VerifyingCertificate, Connected, Disconnected, Failed };
@@ -64,6 +65,7 @@ public:
     bool hasFrame() const { return m_hasFrame; }
     QVariantMap certificate() const { return m_certificate; }
     QString sharedFolder() const { return m_sharedFolder; }
+    bool remounting() const { return m_remounting; }
 
     void startWithPassword(const QString& password);
     void requestCredentials(const QString& error);
@@ -97,6 +99,7 @@ signals:
     void hasFrameChanged();
     void certificateChanged();
     void sharedFolderChanged();
+    void remountingChanged();
     void frameUpdated();
     void connectedWithCredentials(const QString& username, const QString& domain,
                                   const QString& password, bool remember);
@@ -107,6 +110,7 @@ private:
     void start();
     void stopWorker();
     void run();
+    void clearRemounting();
     void setState(State s);
     void setStatus(const QString& text, int stage);
     void post(std::function<void()> fn);
@@ -147,6 +151,7 @@ private:
     std::atomic<bool> m_stop{false};
     std::atomic<bool> m_credentialsNeeded{false};
     std::atomic<bool> m_restartPending{false};
+    bool m_remounting{false};
     std::atomic<bool> m_framePending{false};
     std::atomic<bool> m_live{false};
     rdp_context* m_context = nullptr;

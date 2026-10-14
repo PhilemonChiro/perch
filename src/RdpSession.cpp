@@ -319,6 +319,8 @@ void RdpSession::shareFolder(const QString& path)
     // A dead session can reconnect straight away.
     if (m_thread.joinable()) {
         m_restartPending = true;
+        m_remounting = true;
+        emit remountingChanged();
         setStatus(tr("Reconnecting to apply the shared folder…"), 0);
         setState(Connecting);
         disconnect();
@@ -327,8 +329,17 @@ void RdpSession::shareFolder(const QString& path)
     }
 }
 
+void RdpSession::clearRemounting()
+{
+    if (!m_remounting)
+        return;
+    m_remounting = false;
+    emit remountingChanged();
+}
+
 void RdpSession::requestCredentials(const QString& error)
 {
+    clearRemounting();
     m_errorText = error;
     emit errorTextChanged();
     setState(NeedsCredentials);
@@ -512,6 +523,7 @@ void RdpSession::run()
                     msg = QString::fromUtf8(freerdp_get_last_error_string(err));
                 m_errorText = msg;
                 emit errorTextChanged();
+                clearRemounting();
                 setState(Failed);
             }
         });
@@ -562,6 +574,7 @@ void RdpSession::run()
                 msg = QString::fromUtf8(freerdp_get_error_info_string(info));
             m_errorText.clear();
             emit errorTextChanged();
+            clearRemounting();
             setStatus(msg, 0);
             setState(Disconnected);
         });
@@ -673,6 +686,7 @@ void RdpSession::onEndPaint()
                 m_hasFrame = true;
                 emit hasFrameChanged();
             }
+            clearRemounting();
             emit frameUpdated();
         });
     }

@@ -34,6 +34,8 @@ Item {
 
     readonly property int st: sessionObj ? sessionObj.state : 0
     readonly property bool live: st === RdpSession.Connected && sessionObj.hasFrame
+    // A quick in-place reconnect to apply a shared folder — kept non-disruptive.
+    readonly property bool remounting: sessionObj ? sessionObj.remounting : false
     readonly property bool certPending: sessionObj && sessionObj.certificate.fingerprint !== undefined
 
     onLiveChanged: {
@@ -53,8 +55,9 @@ Item {
         id: view
         anchors.fill: parent
         session: page.sessionObj
-        // Desaturate + dim the stale frame when the session isn't live.
-        layer.enabled: !page.live && visible
+        // Desaturate + dim the stale frame when the session isn't live — but keep
+        // it crisp during a remount, which is a quick in-place reconnect.
+        layer.enabled: !page.live && !page.remounting && visible
         layer.effect: MultiEffect {
             blurEnabled: true
             blur: 0.6
@@ -183,10 +186,45 @@ Item {
         Action { text: qsTr("Unmount folder"); onTriggered: page.applyShare("") }
     }
 
-    // Overlay layer for every non-live state.
+    // Compact, non-disruptive indicator while remounting (quick in-place reconnect).
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.top
+        anchors.topMargin: 16
+        visible: page.remounting
+        opacity: visible ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: Theme.normal } }
+        width: remountRow.implicitWidth + 28
+        height: 38
+        radius: 19
+        color: Qt.rgba(Theme.surface2.r, Theme.surface2.g, Theme.surface2.b, 0.97)
+        border.color: Theme.borderStrong
+        z: 20
+        RectangularShadow {
+            anchors.fill: parent; radius: parent.radius
+            blur: 28; offset.y: 6; spread: 0
+            color: Qt.rgba(0, 0, 0, Theme.dark ? 0.5 : 0.16)
+            z: -1
+        }
+        Row {
+            id: remountRow
+            anchors.centerIn: parent
+            spacing: 10
+            Spinner { anchors.verticalCenter: parent.verticalCenter; size: 15; thickness: 2 }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("Remounting shared folder…")
+                color: Theme.text
+                font.pixelSize: Theme.fontSm
+                font.weight: Font.Medium
+            }
+        }
+    }
+
+    // Overlay layer for every non-live state (except a remount, handled above).
     Item {
         anchors.fill: parent
-        visible: !page.live
+        visible: !page.live && !page.remounting
 
         Loader {
             id: overlay
