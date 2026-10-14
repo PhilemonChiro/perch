@@ -80,15 +80,45 @@ Item {
     // Brief auto-reveal when the session becomes live, so the toolbar is discoverable.
     Timer { id: introTimer; interval: 2800; onTriggered: hotZone.introReveal = false }
 
-    // Always-visible grab handle hinting the toolbar is up there.
+    // Always-visible pull-tab that reveals the toolbar; clickable (not just hover)
+    // and labelled, so the controls are discoverable.
     Rectangle {
+        id: handle
         anchors.horizontalCenter: parent.horizontalCenter
-        y: 7
-        width: 42; height: 5; radius: 3
-        visible: page.live && toolbar.y < 0
-        opacity: zoneHover.hovered ? 0.9 : 0.4
-        color: Theme.textFaint
-        Behavior on opacity { NumberAnimation { duration: Theme.normal } }
+        y: page.live && toolbar.y < 0 ? 0 : -height - 2
+        Behavior on y { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutBack } }
+        width: 80; height: 20
+        radius: 10
+        color: handleHover.hovered ? Theme.surface3 : Qt.rgba(Theme.surface2.r, Theme.surface2.g, Theme.surface2.b, 0.92)
+        border.color: Theme.border
+        Behavior on color { ColorAnimation { duration: Theme.fast } }
+
+        HoverHandler { id: handleHover }
+        TapHandler { onTapped: { hotZone.introReveal = true; introTimer.restart() } }
+
+        Icon {
+            anchors.centerIn: parent
+            name: "chevron"; size: 13; rotation: 90
+            color: handleHover.hovered ? Theme.text : Theme.textDim
+            Behavior on color { ColorAnimation { duration: Theme.fast } }
+            // Gentle bob to draw the eye toward the pull-tab.
+            SequentialAnimation on anchors.verticalCenterOffset {
+                running: handle.y >= 0 && !handleHover.hovered
+                loops: Animation.Infinite
+                NumberAnimation { to: 2; duration: 900; easing.type: Easing.InOutSine }
+                NumberAnimation { to: -1; duration: 900; easing.type: Easing.InOutSine }
+            }
+        }
+
+        ToolTip {
+            visible: handleHover.hovered
+            delay: 300
+            text: qsTr("Session controls")
+            y: handle.height + 4
+            padding: 6
+            contentItem: Text { text: qsTr("Session controls"); color: Theme.text; font.pixelSize: Theme.fontSm; font.family: Theme.fontFamily }
+            background: Rectangle { color: Theme.surface3; radius: Theme.radiusSm; border.color: Theme.borderStrong }
+        }
     }
 
     // Elevation under the toolbar, following its slide.
