@@ -483,6 +483,29 @@ void RdpSession::run()
     freerdp_settings_set_uint32(settings, FreeRDP_DeviceScaleFactor,
                                 scale >= 180 ? 180 : scale >= 140 ? 140 : 100);
 
+    // Smoothness / bandwidth tuning. All of these are negotiated capabilities:
+    // unsupported servers fall back (UDP -> TCP, AVC444 -> progressive -> RFX),
+    // so they are safe defaults that mainly help lossy / high-latency links.
+    //  - Multitransport: a lossy UDP channel with FEC avoids TCP head-of-line
+    //    blocking, so one lost packet costs a tile, not a freeze.
+    freerdp_settings_set_bool(settings, FreeRDP_SupportMultitransport, TRUE);
+    freerdp_settings_set_uint32(settings, FreeRDP_MultitransportFlags,
+                                TRANSPORT_TYPE_UDP_FECR | TRANSPORT_TYPE_UDP_FECL
+                                    | TRANSPORT_TYPE_UDP_PREFERRED);
+    //  - Modern GFX codecs: AVC444 keeps text crisp while video stays cheap;
+    //    progressive refinement sharpens a changed region in instead of blanking
+    //    it on slow links. The server picks whichever it supports.
+    freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444v2, TRUE);
+    freerdp_settings_set_bool(settings, FreeRDP_GfxProgressive, TRUE);
+    //  - QoE acks let the server pace to our real client-side timing.
+    freerdp_settings_set_bool(settings, FreeRDP_GfxSendQoeAck, TRUE);
+    //  - Caches cut redraws on the legacy (non-GFX) fallback path.
+    freerdp_settings_set_bool(settings, FreeRDP_BitmapCacheEnabled, TRUE);
+    freerdp_settings_set_uint32(settings, FreeRDP_GlyphSupportLevel, GLYPH_SUPPORT_FULL);
+    freerdp_settings_set_uint32(settings, FreeRDP_OffscreenSupportLevel, 1u);
+
     {
         QMutexLocker lock(&m_contextMutex);
         m_context = ctx;
