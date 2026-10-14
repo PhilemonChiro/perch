@@ -76,4 +76,16 @@ set_target_properties(relay PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
 )
 
+# Sign the bundle with a stable identity so the macOS keychain "Always Allow"
+# grant survives rebuilds (ad-hoc signatures change every build and re-prompt).
+# Configure with -DRELAY_CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)".
+if(APPLE AND RELAY_CODESIGN_IDENTITY)
+    add_custom_command(TARGET relay POST_BUILD
+        COMMAND codesign --force --sign "${RELAY_CODESIGN_IDENTITY}"
+                --identifier io.relay.app --timestamp=none
+                "$<TARGET_BUNDLE_DIR:relay>"
+        COMMENT "Code-signing Relay.app with ${RELAY_CODESIGN_IDENTITY}"
+        VERBATIM)
+endif()
+
 install(TARGETS relay BUNDLE DESTINATION . RUNTIME DESTINATION bin)
