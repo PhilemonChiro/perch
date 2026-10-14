@@ -82,6 +82,9 @@ public:
     Q_INVOKABLE void signIn(const QString& username, const QString& password, const QString& domain,
                             bool remember);
     Q_INVOKABLE void reconnect();
+    // Show the sign-in prompt so the user can try different credentials, even
+    // when a failure was classified as a network issue rather than auth.
+    Q_INVOKABLE void promptCredentials() { requestCredentials(QString()); }
     Q_INVOKABLE void disconnect();
     // 0 = reject, 1 = trust permanently, 2 = trust for this connection only.
     Q_INVOKABLE void answerCertificate(int verdict);

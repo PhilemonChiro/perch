@@ -578,6 +578,7 @@ Item {
     Component {
         id: endedComp
         Column {
+            id: ended
             width: 400
             spacing: 18
             readonly property bool failed: page.st === RdpSession.Failed
@@ -614,6 +615,12 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: 10
                 GhostButton { text: qsTr("Close tab"); onClicked: page.closeRequested() }
+                GhostButton {
+                    visible: ended.failed
+                    text: qsTr("Enter credentials")
+                    iconName: "lock"
+                    onClicked: page.sessionObj.promptCredentials()
+                }
                 PrimaryButton { text: qsTr("Reconnect"); iconName: "refresh"; onClicked: page.sessionObj.reconnect() }
             }
         }
