@@ -42,6 +42,7 @@ class RdpSession : public QObject
     Q_PROPERTY(QVariantMap certificate READ certificate NOTIFY certificateChanged)
     Q_PROPERTY(QString sharedFolder READ sharedFolder NOTIFY sharedFolderChanged)
     Q_PROPERTY(bool remounting READ remounting NOTIFY remountingChanged)
+    Q_PROPERTY(QString credentialId READ credentialId NOTIFY credentialIdChanged)
 
 public:
     enum State { Idle, NeedsCredentials, Connecting, VerifyingCertificate, Connected, Disconnected, Failed };
@@ -66,6 +67,8 @@ public:
     QVariantMap certificate() const { return m_certificate; }
     QString sharedFolder() const { return m_sharedFolder; }
     bool remounting() const { return m_remounting; }
+    QString credentialId() const { return m_credentialId; }
+    void setCredentialId(const QString& id) { if (m_credentialId == id) return; m_credentialId = id; emit credentialIdChanged(); }
 
     void startWithPassword(const QString& password);
     void requestCredentials(const QString& error);
@@ -108,6 +111,7 @@ signals:
     void certificateChanged();
     void sharedFolderChanged();
     void remountingChanged();
+    void credentialIdChanged();
     void frameUpdated();
     void connectedWithCredentials(const QString& username, const QString& domain,
                                   const QString& password, bool remember);
@@ -144,7 +148,7 @@ private:
     const int m_port;
 
     // GUI-thread state.
-    QString m_username, m_domain, m_password, m_sharedFolder, m_gateway;
+    QString m_username, m_domain, m_password, m_sharedFolder, m_gateway, m_credentialId;
     bool m_remember = false;
     State m_state = Idle;
     QString m_statusText, m_errorText;

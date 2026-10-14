@@ -632,6 +632,7 @@ Item {
                 }
                 CredentialPicker {
                     width: parent.width
+                    credentialId: page.sessionObj ? page.sessionObj.credentialId : ""
                     onChosen: (id) => {
                         if (id === "") page.sessionObj.promptCredentials()
                         else SessionManager.reconnectWithCredential(page.sessionObj, id)

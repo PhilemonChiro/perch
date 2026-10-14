@@ -111,6 +111,7 @@ int SessionManager::openHost(const QString& hostId)
                              h.value("port").toInt(), username, domain, this);
     s->setSharedFolder(h.value("share").toString());
     s->setGateway(h.value("gateway").toString());
+    s->setCredentialId(h.value("credentialId").toString());
     const int row = add(s);
     QPointer<RdpSession> guard(s);
     Credentials::read(passwordKey, [guard](bool found, const QString& password) {
@@ -140,6 +141,7 @@ int SessionManager::openHostWithPassword(const QString& hostId, const QString& p
                              h.value("domain").toString(), this);
     s->setSharedFolder(h.value("share").toString());
     s->setGateway(h.value("gateway").toString());
+    s->setCredentialId(h.value("credentialId").toString());
     const int row = add(s);
     s->startWithPassword(password);
     return row;
@@ -156,6 +158,7 @@ void SessionManager::reconnectWithCredential(RdpSession* s, const QString& crede
     const QString dom = c.value("domain").toString();
     if (!s->hostId().isEmpty())
         ConnectionStore::instance()->setCredential(s->hostId(), credentialId);
+    s->setCredentialId(credentialId);
     QPointer<RdpSession> guard(s);
     Credentials::read(CredentialStore::keychainKey(credentialId),
                       [guard, user, dom](bool, const QString& pw) {
