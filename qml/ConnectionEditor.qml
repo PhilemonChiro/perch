@@ -183,12 +183,15 @@ Popup {
                 }
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 4 }
-                Text { text: qsTr("CREDENTIALS"); color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold; font.letterSpacing: 0.8 }
-
-                // Pick a saved credential set, or enter one inline.
-                ComboBox {
-                    id: credBox
+                Column {
                     Layout.fillWidth: true
+                    spacing: 6
+                    Text { text: qsTr("Credentials"); color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.Medium }
+
+                    // Pick a saved credential set, or enter one inline.
+                    ComboBox {
+                    id: credBox
+                    width: parent.width
                     height: 38
                     model: root.credChoices
                     textRole: "label"
@@ -216,17 +219,19 @@ Popup {
                                 color: cd.actionRow ? Theme.accent : Theme.textDim
                             }
                             Text { text: cd.modelData.label; color: cd.actionRow ? Theme.accent : Theme.text; font.pixelSize: Theme.fontMd; elide: Text.ElideRight }
-                            Text { visible: cd.modelData.sub !== ""; Layout.fillWidth: true; text: cd.modelData.sub; color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily; elide: Text.ElideRight; horizontalAlignment: Text.AlignRight; rightPadding: 6 }
-                            Item { visible: cd.modelData.sub === ""; Layout.fillWidth: true }
+                            Text { visible: cd.modelData.sub !== "" && cd.modelData.sub !== cd.modelData.label; Layout.fillWidth: true; text: cd.modelData.sub; color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily; elide: Text.ElideRight; horizontalAlignment: Text.AlignRight; rightPadding: 6 }
+                            Item { visible: cd.modelData.sub === "" || cd.modelData.sub === cd.modelData.label; Layout.fillWidth: true }
                         }
                         background: Rectangle { radius: Theme.radiusSm; color: cd.highlighted ? Theme.surface3 : "transparent" }
                     }
                     contentItem: Text {
                         leftPadding: 36; rightPadding: 34
                         verticalAlignment: Text.AlignVCenter
-                        text: credBox.hasCred && credBox.sel && credBox.sel.sub
-                              ? credBox.sel.label + "   " + credBox.sel.sub
-                              : (credBox.sel ? credBox.sel.label : "")
+                        text: {
+                            if (!credBox.sel) return ""
+                            const l = credBox.sel.label, s = credBox.sel.sub
+                            return (credBox.hasCred && s && s !== l) ? l + "   " + s : l
+                        }
                         color: credBox.hasCred ? Theme.text : Theme.textDim
                         font.pixelSize: Theme.fontMd
                         elide: Text.ElideRight
@@ -264,6 +269,7 @@ Popup {
                             radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong
                             RectangularShadow { anchors.fill: parent; radius: parent.radius; blur: 24; offset.y: 6; spread: 0; color: Qt.rgba(0, 0, 0, Theme.dark ? 0.45 : 0.14); z: -1 }
                         }
+                    }
                     }
                 }
 
