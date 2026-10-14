@@ -68,10 +68,9 @@ target_link_libraries(relay PRIVATE
     winpr freerdp freerdp-client
 )
 
-# On Linux "Relay" would collide with the build/Relay/ QML module directory
-if(APPLE OR WIN32)
-    set_target_properties(relay PROPERTIES OUTPUT_NAME Relay)
-endif()
+# The output binary is "Perch". (The QML module dir is "Relay", so there is no
+# collision with the Linux executable name.)
+set_target_properties(relay PROPERTIES OUTPUT_NAME Perch)
 
 set_target_properties(relay PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER io.relay.app

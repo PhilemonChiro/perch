@@ -1,0 +1,111 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  QT_VERSION: "6.9.3"
+  QTKEYCHAIN_REF: "0.15.0"
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            name: windows
+          - os: macos-14
+            name: macos
+          - os: ubuntu-24.04
+            name: linux
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          modules: qtshadertools
+          cache: true
+
+      - name: FreeRDP (macOS)
+        if: runner.os == 'macOS'
+        run: brew install freerdp ninja
+
+      - name: FreeRDP (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build freerdp3-dev libsecret-1-dev libgl1-mesa-dev libxkbcommon-dev
+
+      - name: FreeRDP (Windows, vcpkg)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install freerdp:x64-windows
+          "CMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" >> $env:GITHUB_ENV
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: QtKeychain
+        shell: bash
+        run: |
+          git clone --depth 1 --branch "$QTKEYCHAIN_REF" https://github.com/frankosterfeld/qtkeychain.git "$RUNNER_TEMP/qtkeychain"
+          cmake -S "$RUNNER_TEMP/qtkeychain" -B "$RUNNER_TEMP/qtkeychain/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_QT6=ON -DBUILD_TRANSLATIONS=OFF -DBUILD_TEST_APPLICATION=OFF \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/deps"
+          cmake --build "$RUNNER_TEMP/qtkeychain/build"
+          cmake --install "$RUNNER_TEMP/qtkeychain/build"
+
+      - name: Configure
+        shell: bash
+        run: |
+          EXTRA=()
+          [ -n "${CMAKE_TOOLCHAIN_FILE:-}" ] && EXTRA+=("-DCMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE")
+          [ "$RUNNER_OS" = macOS ] && EXTRA+=("-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/deps;/opt/homebrew") \
+                                   || EXTRA+=("-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/deps")
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "${EXTRA[@]}"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          macdeployqt build/Perch.app -qmldir=qml -dmg
+          mv build/Perch.dmg Perch-macOS.dmg
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist && cp build/Perch.exe dist/
+          cp "$RUNNER_TEMP"/deps/bin/*.dll dist/ 2>/dev/null || true
+          cp "$VCPKG_INSTALLATION_ROOT"/installed/x64-windows/bin/*.dll dist/ 2>/dev/null || true
+          windeployqt --qmldir qml --release dist/Perch.exe
+          cd dist && 7z a ../Perch-Windows-x64.zip . >/dev/null
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p Perch-linux && cp build/Perch Perch-linux/
+          cp README.md LICENSE NOTICE Perch-linux/ 2>/dev/null || true
+          tar czf Perch-Linux-x64.tar.gz -C Perch-linux .
+
+      - name: Publish to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Perch-macOS.dmg
+            Perch-Windows-x64.zip
+            Perch-Linux-x64.tar.gz
+          generate_release_notes: true
+          fail_on_unmatched_files: false
