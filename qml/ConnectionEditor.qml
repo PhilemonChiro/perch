@@ -224,15 +224,29 @@ Popup {
                         }
                         background: Rectangle { radius: Theme.radiusSm; color: cd.highlighted ? Theme.surface3 : "transparent" }
                     }
+                    readonly property bool hasCred: root.credentialId !== ""
                     contentItem: RowLayout {
-                        spacing: 10
-                        Icon { Layout.leftMargin: 12; name: "lock"; size: 15; color: root.credentialId === "" ? Theme.textFaint : Theme.accent }
+                        spacing: 11
+                        Rectangle {
+                            Layout.leftMargin: 8
+                            width: 30; height: 30; radius: 9
+                            color: credBox.hasCred ? Theme.accentSoft : Theme.surface3
+                            Behavior on color { ColorAnimation { duration: Theme.fast } }
+                            Icon { anchors.centerIn: parent; name: "lock"; size: 15; color: credBox.hasCred ? Theme.accent : Theme.textDim }
+                        }
                         Column {
                             Layout.fillWidth: true
                             Layout.rightMargin: 30
                             spacing: 1
-                            Text { text: credBox.sel ? credBox.sel.label : ""; color: root.credentialId === "" ? Theme.textDim : Theme.text; font.pixelSize: Theme.fontMd; elide: Text.ElideRight; width: parent.width }
-                            Text { visible: !!(credBox.sel && credBox.sel.sub); text: credBox.sel && credBox.sel.sub ? credBox.sel.sub : ""; color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily; elide: Text.ElideRight; width: parent.width }
+                            Text { text: credBox.sel ? credBox.sel.label : ""; color: Theme.text; font.pixelSize: Theme.fontMd; font.weight: credBox.hasCred ? Font.Medium : Font.Normal; elide: Text.ElideRight; width: parent.width }
+                            Text {
+                                visible: credBox.hasCred ? !!(credBox.sel && credBox.sel.sub) : true
+                                text: credBox.hasCred ? (credBox.sel && credBox.sel.sub ? credBox.sel.sub : "") : qsTr("Prompted at connect")
+                                color: Theme.textFaint
+                                font.pixelSize: Theme.fontXs
+                                font.family: credBox.hasCred ? Theme.monoFamily : Theme.fontFamily
+                                elide: Text.ElideRight; width: parent.width
+                            }
                         }
                     }
                     indicator: Icon {
@@ -263,15 +277,6 @@ Popup {
                             RectangularShadow { anchors.fill: parent; radius: parent.radius; blur: 24; offset.y: 6; spread: 0; color: Qt.rgba(0, 0, 0, Theme.dark ? 0.45 : 0.14); z: -1 }
                         }
                     }
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    visible: root.credentialId === ""
-                    text: qsTr("No saved credential selected — you’ll be asked to sign in when connecting.")
-                    color: Theme.textFaint
-                    font.pixelSize: Theme.fontXs
-                    wrapMode: Text.WordWrap
                 }
 
                 Column {

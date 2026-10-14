@@ -28,20 +28,22 @@ Popup {
 
     function startAdd() {
         editingId = "new"
-        labelF.text = ""; userF.text = ""; domainF.text = ""; passF.text = ""
+        labelF.text = ""; userF.text = ""; passF.text = ""
         labelF.focusInput()
     }
     function startEdit(id) {
         const c = CredentialStore.get(id)
         if (!c.id) return
         editingId = id
-        labelF.text = c.label; userF.text = c.username; domainF.text = c.domain; passF.text = ""
+        labelF.text = c.label
+        userF.text = c.domain ? (c.domain + "\\" + c.username) : c.username
+        passF.text = ""
     }
     function saveForm() {
         if (!userF.text.trim()) { userF.error = true; userF.focusInput(); return }
         CredentialStore.save({
             id: editingId === "new" ? "" : editingId,
-            label: labelF.text, username: userF.text, domain: domainF.text, password: passF.text
+            label: labelF.text, username: userF.text, domain: "", password: passF.text
         })
         refresh()
         editingId = ""
@@ -188,7 +190,6 @@ Popup {
 
             Field { id: labelF; Layout.fillWidth: true; label: qsTr("Label"); placeholder: qsTr("e.g. Domain admin"); onAccepted: userF.focusInput() }
             Field { id: userF; Layout.fillWidth: true; label: qsTr("Username"); placeholder: qsTr("administrator  or  DOMAIN\\user"); input.onTextChanged: error = false; onAccepted: passF.focusInput() }
-            Field { id: domainF; Layout.fillWidth: true; label: qsTr("Domain"); placeholder: qsTr("Optional"); mono: true; onAccepted: passF.focusInput() }
             Field { id: passF; Layout.fillWidth: true; label: qsTr("Password"); password: true
                 placeholder: root.editingId === "new" ? qsTr("Optional — you’ll be asked when connecting") : qsTr("Leave blank to keep the saved one")
                 onAccepted: root.saveForm() }
