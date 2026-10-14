@@ -628,8 +628,17 @@ bool RdpSession::onDesktopResize()
     const QSize size{int(w), int(h)};
     {
         QMutexLocker lock(&m_frameMutex);
+        // Carry the old pixels into the new buffer so a resize before the next
+        // repaint shows the previous frame rather than a black flash.
+        const QImage prev = m_frame;
         m_frame = QImage(size, QImage::Format_RGB32);
         m_frame.fill(Qt::black);
+        if (!prev.isNull()) {
+            const int cw = qMin(prev.width(), size.width());
+            const int ch = qMin(prev.height(), size.height());
+            for (int y = 0; y < ch; ++y)
+                std::memcpy(m_frame.scanLine(y), prev.scanLine(y), size_t(cw) * 4);
+        }
     }
     post([this, size] { m_remoteSize = size; emit remoteSizeChanged(); });
     return true;

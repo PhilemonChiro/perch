@@ -73,7 +73,9 @@ void RdpView::setSession(RdpSession* s)
     m_session = s;
     if (m_session) {
         connect(m_session, &RdpSession::frameUpdated, this, [this] { m_dirty = true; update(); });
-        connect(m_session, &RdpSession::remoteSizeChanged, this, [this] { m_dirty = true; update(); });
+        // Only re-fit the rect on resize; keep the last texture until a real frame
+        // arrives (frameUpdated) so a resized/empty buffer never flashes on screen.
+        connect(m_session, &RdpSession::remoteSizeChanged, this, [this] { update(); });
         pushViewport();
     }
     m_dirty = true;
@@ -106,30 +108,33 @@ QPointF RdpView::toRemote(const QPointF& p) const
 QSGNode* RdpView::updatePaintNode(QSGNode* old, UpdatePaintNodeData*)
 {
     auto* node = static_cast<QSGSimpleTextureNode*>(old);
-    const QRectF rect = targetRect();
-    if (!m_session || rect.isEmpty()) {
+    if (!m_session) {
         delete node;
         return nullptr;
     }
-    if (!node) {
-        node = new QSGSimpleTextureNode;
-        node->setOwnsTexture(false);
-        node->setFiltering(QSGTexture::Linear);
-        m_dirty = true;
-    }
+    // Refresh the texture only when a real new frame is available. During a
+    // resize the remote buffer is briefly reallocated (null frame / empty rect);
+    // keep the last frame on screen through that gap rather than flashing black.
     if (m_dirty) {
         const QImage img = m_session->frame();
-        if (img.isNull()) {
-            delete node->texture();
-            delete node;
-            return nullptr;
+        if (!img.isNull()) {
+            if (!node) {
+                node = new QSGSimpleTextureNode;
+                node->setOwnsTexture(false);
+                node->setFiltering(QSGTexture::Linear);
+            }
+            QSGTexture* previous = node->texture();
+            node->setTexture(window()->createTextureFromImage(img, QQuickWindow::TextureIsOpaque));
+            delete previous;
+            m_dirty = false;
         }
-        QSGTexture* previous = node->texture();
-        node->setTexture(window()->createTextureFromImage(img, QQuickWindow::TextureIsOpaque));
-        delete previous;
-        m_dirty = false;
+        // else: leave the node as-is and stay dirty; onEndPaint will update().
     }
-    node->setRect(rect);
+    if (!node)
+        return nullptr; // nothing drawn yet
+    const QRectF rect = targetRect();
+    if (!rect.isEmpty())
+        node->setRect(rect); // keep the last rect during a transient empty size
     return node;
 }
 
