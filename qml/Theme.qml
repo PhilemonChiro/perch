@@ -49,11 +49,11 @@ QtObject {
     readonly property int radiusLg: 16
     readonly property int radiusXl: 22
 
-    // Type — system sans, intentional scale; mono only for real telemetry.
-    readonly property string fontFamily: Qt.platform.os === "osx" ? Qt.application.font.family
-        : Qt.platform.os === "windows" ? "Segoe UI Variable Text" : "Inter"
+    // Type — the native UI font on each OS (Segoe UI on Windows, SF Pro on macOS,
+    // the configured sans on Linux), and a monospace that ships by default on each.
+    readonly property string fontFamily: Qt.application.font.family
     readonly property string monoFamily: Qt.platform.os === "osx" ? "Menlo"
-        : Qt.platform.os === "windows" ? "Cascadia Mono" : "JetBrains Mono"
+        : Qt.platform.os === "windows" ? "Consolas" : "DejaVu Sans Mono"
     readonly property int fontXs: 11
     readonly property int fontSm: 12
     readonly property int fontMd: 13
