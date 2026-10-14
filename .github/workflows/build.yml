@@ -35,13 +35,17 @@ jobs:
       # --- FreeRDP 3 ---
       - name: FreeRDP (macOS)
         if: runner.os == 'macOS'
-        # The runner image ships a pinned local homebrew/core tap (FreeRDP
-        # 3.31.0), which `brew install` prefers over the API. Untap it so the
-        # install resolves from Homebrew's API (currently 3.32.2, >= the
-        # SECURITY.md floor) without a slow/hanging `brew update`.
+        # The runner image ships BOTH a pinned local homebrew/core tap and a
+        # stale Homebrew API cache (formula.jws.json) that resolve FreeRDP to
+        # 3.31.x. With auto-update off, brew reads the stale cache and never
+        # sees 3.32.2. Untap and clear the API cache so the install fetches the
+        # current formula (3.32.2, >= the SECURITY.md floor) and its
+        # arm64_sequoia bottle (present on macos-15). No slow `brew update`.
         run: |
-          brew untap --force homebrew/core homebrew/cask || true
+          brew untap --force homebrew/core homebrew/cask 2>/dev/null || true
+          rm -rf "$(brew --cache)/api" ~/Library/Caches/Homebrew/api 2>/dev/null || true
           brew install freerdp ninja
+          brew list --versions freerdp
 
       - name: FreeRDP (Linux)
         if: runner.os == 'Linux'
