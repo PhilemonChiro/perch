@@ -33,7 +33,7 @@ Popup {
 
     function refreshCreds() {
         const saved = CredentialStore.list().map(c => ({ id: c.id, label: c.label, sub: (c.domain ? c.domain + "\\" : "") + c.username }))
-        credChoices = [{ id: "", label: qsTr("Enter manually"), sub: "" }]
+        credChoices = [{ id: "", label: qsTr("Ask when connecting"), sub: "" }]
             .concat(saved)
             .concat([{ id: "__new__", label: qsTr("New credential…"), sub: "" },
                      { id: "__manage__", label: qsTr("Manage credentials…"), sub: "" }])
@@ -46,7 +46,7 @@ Popup {
     function syncCred() { credBox.currentIndex = credIndex(credentialId) }
 
     function reset() {
-        nameF.text = ""; hostF.text = ""; portF.text = "3389"; userF.text = ""; passF.text = ""; gatewayF.text = ""
+        nameF.text = ""; hostF.text = ""; portF.text = "3389"; gatewayF.text = ""
         sharePath = ""
         credentialId = ""
         hostF.error = false
@@ -67,7 +67,6 @@ Popup {
         editId = id; reset()
         nameF.text = h.name === h.host ? "" : h.name
         hostF.text = h.host; portF.text = String(h.port)
-        userF.text = h.domain ? (h.domain + "\\" + h.username) : h.username
         gatewayF.text = h.gateway || ""
         sharePath = h.share || ""
         credentialId = h.credentialId || ""
@@ -78,28 +77,23 @@ Popup {
     function openFromSession(s) {
         editId = ""; reset(); selectFolder("")
         hostF.text = s.host; portF.text = String(s.port)
-        userF.text = s.domain ? (s.domain + "\\" + s.username) : s.username
         open()
     }
     function save(connect) {
         if (!hostF.text.trim()) { hostF.error = true; shake.restart(); hostF.focusInput(); return }
+        // Credentials come from a saved set (credentialId) or are entered at the
+        // connect prompt. Any legacy inline username/password on the connection is
+        // preserved when no set is chosen.
+        const prev = editId ? ConnectionStore.host(editId) : {}
         const id = ConnectionStore.saveHost({
             id: editId, name: nameF.text, host: hostF.text, port: parseInt(portF.text) || 3389,
-            username: credentialId === "" ? userF.text : "", domain: "",
+            username: credentialId === "" ? (prev.username || "") : "",
+            domain: credentialId === "" ? (prev.domain || "") : "",
             share: sharePath, gateway: gatewayF.text, credentialId: credentialId,
             folderId: folderChoices[folderBox.currentIndex] ? folderChoices[folderBox.currentIndex].id : ""
         })
-        const pass = passF.text
-        if (pass) SessionManager.storePassword(id, pass)
         close()
-        if (connect && pass) {
-            // Connect with the password we just captured; the keychain write above
-            // is async and a plain openHost() would race it and fall back to a prompt.
-            SessionManager.openHostWithPassword(id, pass)
-            saved(nameF.text || hostF.text, false, id)
-        } else {
-            saved(nameF.text || hostF.text, connect, id)
-        }
+        saved(nameF.text || hostF.text, connect, id)
     }
 
     onOpened: (editing ? nameF : hostF).focusInput()
@@ -232,14 +226,14 @@ Popup {
                     }
                     contentItem: RowLayout {
                         spacing: 10
-                        Icon { Layout.leftMargin: 12; name: "lock"; size: 15; color: root.credentialId === "" ? Theme.textDim : Theme.accent }
+                        Icon { Layout.leftMargin: 12; name: "lock"; size: 15; color: root.credentialId === "" ? Theme.textFaint : Theme.accent }
                         Column {
                             Layout.fillWidth: true
+                            Layout.rightMargin: 30
                             spacing: 1
-                            Text { text: credBox.sel ? credBox.sel.label : ""; color: Theme.text; font.pixelSize: Theme.fontMd; elide: Text.ElideRight; width: parent.width }
+                            Text { text: credBox.sel ? credBox.sel.label : ""; color: root.credentialId === "" ? Theme.textDim : Theme.text; font.pixelSize: Theme.fontMd; elide: Text.ElideRight; width: parent.width }
                             Text { visible: !!(credBox.sel && credBox.sel.sub); text: credBox.sel && credBox.sel.sub ? credBox.sel.sub : ""; color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily; elide: Text.ElideRight; width: parent.width }
                         }
-                        Item { Layout.preferredWidth: 20 }
                     }
                     indicator: Icon {
                         x: credBox.width - width - 12; y: (credBox.height - height) / 2
@@ -254,21 +248,30 @@ Popup {
                     }
                     popup: Popup {
                         y: credBox.height + 4; width: credBox.width
-                        implicitHeight: Math.min(contentItem.implicitHeight + 12, 320); padding: 6
-                        contentItem: ListView { clip: true; implicitHeight: contentHeight; model: credBox.popup.visible ? credBox.delegateModel : null; currentIndex: credBox.highlightedIndex }
-                        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+                        implicitHeight: Math.min(contentItem.implicitHeight + 12, 340); padding: 6
+                        enter: Transition { ParallelAnimation {
+                            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.fast }
+                            NumberAnimation { property: "y"; from: credBox.height - 2; to: credBox.height + 4; duration: Theme.normal; easing.type: Theme.easing } } }
+                        contentItem: ListView {
+                            clip: true; implicitHeight: contentHeight; spacing: 2
+                            model: credBox.popup.visible ? credBox.delegateModel : null
+                            currentIndex: credBox.highlightedIndex
+                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        }
+                        background: Rectangle {
+                            radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong
+                            RectangularShadow { anchors.fill: parent; radius: parent.radius; blur: 24; offset.y: 6; spread: 0; color: Qt.rgba(0, 0, 0, Theme.dark ? 0.45 : 0.14); z: -1 }
+                        }
                     }
                 }
 
-                Field { id: userF; visible: root.credentialId === ""; Layout.fillWidth: true; label: qsTr("Username"); placeholder: qsTr("administrator  or  DOMAIN\\user"); onAccepted: root.save(false) }
-                Field {
-                    id: passF
-                    visible: root.credentialId === ""
+                Text {
                     Layout.fillWidth: true
-                    label: qsTr("Password")
-                    password: true
-                    placeholder: root.editing ? qsTr("Leave blank to keep the saved one") : qsTr("Optional — you’ll be asked when connecting")
-                    onAccepted: root.save(false)
+                    visible: root.credentialId === ""
+                    text: qsTr("No saved credential selected — you’ll be asked to sign in when connecting.")
+                    color: Theme.textFaint
+                    font.pixelSize: Theme.fontXs
+                    wrapMode: Text.WordWrap
                 }
 
                 Column {
