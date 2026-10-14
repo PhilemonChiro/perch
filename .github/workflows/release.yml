@@ -90,6 +90,9 @@ jobs:
           mkdir -p dist && cp build/Perch.exe dist/
           cp "$RUNNER_TEMP"/deps/bin/*.dll dist/ 2>/dev/null || true
           cp "$VCPKG_INSTALLATION_ROOT"/installed/x64-windows/bin/*.dll dist/ 2>/dev/null || true
+          # windeployqt resolves qt6keychain.dll (a qt6* name) from Qt's bin, not
+          # from the exe dir, so place it beside windeployqt before running it.
+          cp "$RUNNER_TEMP"/deps/bin/*.dll "$(dirname "$(command -v windeployqt)")/" 2>/dev/null || true
           windeployqt --qmldir qml --release dist/Perch.exe
           cd dist && 7z a ../Perch-Windows-x64.zip . >/dev/null
 

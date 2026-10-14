@@ -91,6 +91,9 @@ jobs:
           # them (qt6keychain.dll lives in RUNNER_TEMP, not Qt's bin dir).
           cp "$RUNNER_TEMP"/deps/bin/*.dll dist/ 2>/dev/null || true
           cp "$VCPKG_INSTALLATION_ROOT"/installed/x64-windows/bin/*.dll dist/ 2>/dev/null || true
+          # windeployqt resolves qt6keychain.dll (a qt6* name) from Qt's bin, not
+          # from the exe dir, so place it beside windeployqt before running it.
+          cp "$RUNNER_TEMP"/deps/bin/*.dll "$(dirname "$(command -v windeployqt)")/" 2>/dev/null || true
           windeployqt --qmldir qml --release dist/Perch.exe
 
       - uses: actions/upload-artifact@v4
