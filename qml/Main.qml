@@ -154,6 +154,7 @@ ApplicationWindow {
                         onFullscreenRequested: win.toggleFullscreen()
                         onSaveRequested: editor.openFromSession(session)
                         onToast: (m, k) => win.toast(m, k)
+                        onManageCredentials: (addNew) => { credManager.openManager(); if (addNew) credManager.startAdd() }
                     }
                 }
             }

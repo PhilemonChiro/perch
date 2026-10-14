@@ -145,6 +145,25 @@ int SessionManager::openHostWithPassword(const QString& hostId, const QString& p
     return row;
 }
 
+void SessionManager::reconnectWithCredential(RdpSession* s, const QString& credentialId)
+{
+    if (!s)
+        return;
+    const QVariantMap c = CredentialStore::instance()->get(credentialId);
+    if (c.isEmpty())
+        return;
+    const QString user = c.value("username").toString();
+    const QString dom = c.value("domain").toString();
+    if (!s->hostId().isEmpty())
+        ConnectionStore::instance()->setCredential(s->hostId(), credentialId);
+    QPointer<RdpSession> guard(s);
+    Credentials::read(CredentialStore::keychainKey(credentialId),
+                      [guard, user, dom](bool, const QString& pw) {
+                          if (guard)
+                              guard->signIn(user, pw, dom, false);
+                      });
+}
+
 int SessionManager::quickConnect(const QString& text)
 {
     static const QRegularExpression re(

@@ -378,6 +378,15 @@ void ConnectionStore::setShare(const QString& id, const QString& path)
     save();
 }
 
+void ConnectionStore::setCredential(const QString& id, const QString& credentialId)
+{
+    const int i = hostIndex(id);
+    if (i < 0 || m_hosts[i].credentialId == credentialId)
+        return;
+    m_hosts[i].credentialId = credentialId;
+    save();
+}
+
 void ConnectionStore::remove(const QString& id)
 {
     if (const int i = hostIndex(id); i >= 0) {

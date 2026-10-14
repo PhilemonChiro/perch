@@ -53,6 +53,8 @@ public:
     Q_INVOKABLE QString toLocalPath(const QUrl& url) const { return url.toLocalFile(); }
     // Persists a host's shared folder (used when it's changed mid-session).
     Q_INVOKABLE void setShare(const QString& id, const QString& path);
+    // Persists a host's referenced credential set (used when chosen at connect time).
+    Q_INVOKABLE void setCredential(const QString& id, const QString& credentialId);
 
 signals:
     void changed();

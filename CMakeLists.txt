@@ -40,6 +40,7 @@ qt_add_qml_module(relay
         qml/CommandPalette.qml
         qml/ConnectionEditor.qml
         qml/CredentialManager.qml
+        qml/CredentialPicker.qml
         qml/components/Icon.qml
         qml/components/IconButton.qml
         qml/components/PrimaryButton.qml

@@ -29,6 +29,9 @@ public:
     // Opens a saved connection using a password supplied in memory, skipping the
     // async keychain read (whose job may not yet see a just-written password).
     Q_INVOKABLE int openHostWithPassword(const QString& hostId, const QString& password);
+    // Reconnect a session using a saved credential set (resolves its username/domain
+    // and keychain password), and remember the choice on the connection.
+    Q_INVOKABLE void reconnectWithCredential(RdpSession* session, const QString& credentialId);
     // Parses "[domain\]user@host[:port]" and opens an ad-hoc session.
     Q_INVOKABLE int quickConnect(const QString& text);
     Q_INVOKABLE void close(int index);

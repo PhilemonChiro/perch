@@ -15,6 +15,7 @@ Item {
     signal fullscreenRequested()
     signal saveRequested()
     signal toast(string message, string kind)
+    signal manageCredentials(bool addNew)
 
     function folderName(path) {
         if (!path) return ""
@@ -615,13 +616,28 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: 10
                 GhostButton { text: qsTr("Close tab"); onClicked: page.closeRequested() }
-                GhostButton {
-                    visible: ended.failed
-                    text: qsTr("Enter credentials")
-                    iconName: "lock"
-                    onClicked: page.sessionObj.promptCredentials()
-                }
                 PrimaryButton { text: qsTr("Reconnect"); iconName: "refresh"; onClicked: page.sessionObj.reconnect() }
+            }
+
+            // Wrong credentials? Pick a saved set (or add one) to reconnect with it.
+            Column {
+                visible: ended.failed
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: 320
+                spacing: 6
+                topPadding: 6
+                Text {
+                    text: qsTr("Sign in with a credential")
+                    color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.Medium
+                }
+                CredentialPicker {
+                    width: parent.width
+                    onChosen: (id) => {
+                        if (id === "") page.sessionObj.promptCredentials()
+                        else SessionManager.reconnectWithCredential(page.sessionObj, id)
+                    }
+                    onManage: (addNew) => page.manageCredentials(addNew)
+                }
             }
         }
     }
