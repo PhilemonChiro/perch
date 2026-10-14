@@ -189,9 +189,10 @@ Popup {
                 ComboBox {
                     id: credBox
                     Layout.fillWidth: true
-                    height: 46
+                    height: 38
                     model: root.credChoices
                     textRole: "label"
+                    readonly property bool hasCred: root.credentialId !== ""
                     readonly property var sel: root.credChoices[currentIndex] || root.credChoices[0]
                     onActivated: (i) => {
                         const v = root.credChoices[i] ? root.credChoices[i].id : ""
@@ -204,50 +205,37 @@ Popup {
                         required property var modelData
                         required property int index
                         readonly property bool actionRow: cd.modelData.id === "__manage__" || cd.modelData.id === "__new__"
-                        width: credBox.width - 12; x: 6
-                        height: actionRow || !cd.modelData.sub ? 34 : 44
+                        width: credBox.width - 12; x: 6; height: 34
                         highlighted: credBox.highlightedIndex === index
                         contentItem: RowLayout {
-                            spacing: 10
+                            spacing: 9
                             Icon {
-                                Layout.leftMargin: 6
+                                Layout.leftMargin: 8
                                 name: cd.modelData.id === "__new__" ? "plus" : cd.modelData.id === "__manage__" ? "pencil" : "lock"
                                 size: 14
                                 color: cd.actionRow ? Theme.accent : Theme.textDim
                             }
-                            Column {
-                                Layout.fillWidth: true
-                                spacing: 1
-                                Text { text: cd.modelData.label; color: cd.actionRow ? Theme.accent : Theme.text; font.pixelSize: Theme.fontMd; elide: Text.ElideRight; width: parent.width }
-                                Text { visible: cd.modelData.sub !== ""; text: cd.modelData.sub; color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily; elide: Text.ElideRight; width: parent.width }
-                            }
+                            Text { text: cd.modelData.label; color: cd.actionRow ? Theme.accent : Theme.text; font.pixelSize: Theme.fontMd; elide: Text.ElideRight }
+                            Text { visible: cd.modelData.sub !== ""; Layout.fillWidth: true; text: cd.modelData.sub; color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily; elide: Text.ElideRight; horizontalAlignment: Text.AlignRight; rightPadding: 6 }
+                            Item { visible: cd.modelData.sub === ""; Layout.fillWidth: true }
                         }
                         background: Rectangle { radius: Theme.radiusSm; color: cd.highlighted ? Theme.surface3 : "transparent" }
                     }
-                    readonly property bool hasCred: root.credentialId !== ""
-                    contentItem: RowLayout {
-                        spacing: 11
-                        Rectangle {
-                            Layout.leftMargin: 8
-                            width: 30; height: 30; radius: 9
-                            color: credBox.hasCred ? Theme.accentSoft : Theme.surface3
-                            Behavior on color { ColorAnimation { duration: Theme.fast } }
-                            Icon { anchors.centerIn: parent; name: "lock"; size: 15; color: credBox.hasCred ? Theme.accent : Theme.textDim }
-                        }
-                        Column {
-                            Layout.fillWidth: true
-                            Layout.rightMargin: 30
-                            spacing: 1
-                            Text { text: credBox.sel ? credBox.sel.label : ""; color: Theme.text; font.pixelSize: Theme.fontMd; font.weight: credBox.hasCred ? Font.Medium : Font.Normal; elide: Text.ElideRight; width: parent.width }
-                            Text {
-                                visible: credBox.hasCred ? !!(credBox.sel && credBox.sel.sub) : true
-                                text: credBox.hasCred ? (credBox.sel && credBox.sel.sub ? credBox.sel.sub : "") : qsTr("Prompted at connect")
-                                color: Theme.textFaint
-                                font.pixelSize: Theme.fontXs
-                                font.family: credBox.hasCred ? Theme.monoFamily : Theme.fontFamily
-                                elide: Text.ElideRight; width: parent.width
-                            }
-                        }
+                    contentItem: Text {
+                        leftPadding: 36; rightPadding: 34
+                        verticalAlignment: Text.AlignVCenter
+                        text: credBox.hasCred && credBox.sel && credBox.sel.sub
+                              ? credBox.sel.label + "   " + credBox.sel.sub
+                              : (credBox.sel ? credBox.sel.label : "")
+                        color: credBox.hasCred ? Theme.text : Theme.textDim
+                        font.pixelSize: Theme.fontMd
+                        elide: Text.ElideRight
+                    }
+                    Icon {
+                        name: "lock"; size: 15
+                        color: credBox.hasCred ? Theme.accent : Theme.textFaint
+                        anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                        Behavior on color { ColorAnimation { duration: Theme.fast } }
                     }
                     indicator: Icon {
                         x: credBox.width - width - 12; y: (credBox.height - height) / 2
