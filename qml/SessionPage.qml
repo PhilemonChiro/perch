@@ -255,76 +255,86 @@ Item {
     Component {
         id: progressComp
         Column {
-            spacing: 22
-            width: 360
-            Item {
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: 64; height: 64
-                Spinner { anchors.fill: parent; size: 64; thickness: 3 }
-                Icon {
-                    anchors.centerIn: parent
-                    name: page.sessionObj && page.sessionObj.stage >= 1 ? "lock" : "monitor"
-                    size: 20
-                    color: Theme.text
-                }
-            }
-            Column {
+            width: 440
+            spacing: 0
+            readonly property int stage: page.sessionObj ? page.sessionObj.stage : 0
+            readonly property real progress: Math.min(1, (stage + 0.5) / 4)
+            readonly property var steps: [qsTr("Connect"), qsTr("Secure"), qsTr("Sign in"), qsTr("Desktop")]
+
+            // The host being reached is the hero of this moment.
+            Text {
                 width: parent.width
-                spacing: 6
-                Text {
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    text: page.sessionObj ? page.sessionObj.title : ""
-                    color: Theme.text
-                    font.pixelSize: Theme.fontXl
-                    font.weight: Font.DemiBold
-                }
-                Text {
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    text: page.sessionObj ? page.sessionObj.statusText : ""
-                    color: Theme.textDim
-                    font.pixelSize: Theme.fontMd
-                }
+                text: page.sessionObj ? page.sessionObj.title : ""
+                color: Theme.text
+                font.pixelSize: Theme.fontHero
+                font.weight: Font.DemiBold
+                font.letterSpacing: -0.5
+                elide: Text.ElideRight
             }
-            // Step track: each stage lights up as it's reached.
-            Row {
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 6
-                Repeater {
-                    model: [qsTr("Connect"), qsTr("Secure"), qsTr("Sign in"), qsTr("Desktop")]
-                    delegate: Column {
-                        required property int index
-                        required property string modelData
-                        spacing: 6
-                        readonly property int stage: page.sessionObj ? page.sessionObj.stage : 0
-                        Rectangle {
-                            width: 64; height: 4; radius: 2
-                            color: Theme.surface3
-                            Rectangle {
-                                height: parent.height; radius: 2
-                                width: stage > index ? parent.width : stage === index ? parent.width * 0.5 : 0
-                                color: Theme.accent
-                                Behavior on width { NumberAnimation { duration: 500; easing.type: Theme.easing } }
-                                SequentialAnimation on opacity {
-                                    running: stage === index
-                                    loops: Animation.Infinite
-                                    NumberAnimation { to: 0.45; duration: 600 }
-                                    NumberAnimation { to: 1; duration: 600 }
-                                }
-                            }
-                        }
-                        Text {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: modelData
-                            color: stage >= index ? Theme.textDim : Theme.textFaint
-                            font.pixelSize: Theme.fontXs
+            Item { width: 1; height: 8 }
+            Text {
+                text: page.sessionObj ? (page.sessionObj.host + "  ·  " + page.sessionObj.port) : ""
+                color: Theme.textFaint
+                font.family: Theme.monoFamily
+                font.pixelSize: Theme.fontSm
+            }
+
+            Item { width: 1; height: 44 }
+
+            Text {
+                text: page.sessionObj ? page.sessionObj.statusText : ""
+                color: Theme.textDim
+                font.pixelSize: Theme.fontMd
+            }
+            Item { width: 1; height: 16 }
+
+            // One calm progress thread that fills through the four stages.
+            Rectangle {
+                id: track
+                width: parent.width; height: 3; radius: 2
+                color: Theme.surface3
+                Rectangle {
+                    id: fill
+                    height: parent.height; radius: 2
+                    width: parent.width * progress
+                    color: Theme.accent
+                    Behavior on width { NumberAnimation { duration: 600; easing.type: Theme.easingEmph } }
+                    // Soft leading glow, a quiet sign of life.
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right
+                        width: 9; height: 9; radius: 5
+                        color: Theme.accent
+                        SequentialAnimation on opacity {
+                            running: true; loops: Animation.Infinite
+                            NumberAnimation { to: 0.35; duration: 900; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutSine }
                         }
                     }
                 }
             }
+            Item { width: 1; height: 12 }
+            Row {
+                width: parent.width
+                Repeater {
+                    model: steps
+                    delegate: Text {
+                        required property int index
+                        required property string modelData
+                        width: track.width / 4
+                        horizontalAlignment: index === 0 ? Text.AlignLeft
+                                           : index === 3 ? Text.AlignRight : Text.AlignHCenter
+                        text: modelData
+                        color: stage === index ? Theme.accent : stage > index ? Theme.textDim : Theme.textFaint
+                        font.pixelSize: Theme.fontXs
+                        font.weight: stage === index ? Font.Medium : Font.Normal
+                        Behavior on color { ColorAnimation { duration: Theme.normal } }
+                    }
+                }
+            }
+
+            Item { width: 1; height: 40 }
             GhostButton {
-                anchors.horizontalCenter: parent.horizontalCenter
                 text: qsTr("Cancel")
                 onClicked: page.sessionObj.disconnect()
             }

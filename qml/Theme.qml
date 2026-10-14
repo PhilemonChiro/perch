@@ -1,6 +1,8 @@
 pragma Singleton
 import QtQuick
 
+// Relay "Calm studio": cool-neutral graphite surfaces, a single calm azure accent
+// for brand and primary action, green reserved for live connection status.
 QtObject {
     id: theme
 
@@ -9,56 +11,61 @@ QtObject {
     readonly property bool dark: mode === "dark"
         || (mode === "system" && Qt.styleHints.colorScheme !== Qt.ColorScheme.Light)
 
-    // Surfaces
-    readonly property color bg:        dark ? "#0A0B10" : "#F5F6FA"
-    readonly property color sidebar:   dark ? "#0E1016" : "#EDEFF5"
-    readonly property color surface:   dark ? "#13161E" : "#FFFFFF"
-    readonly property color surface2:  dark ? "#1A1E28" : "#F0F2F7"
-    readonly property color surface3:  dark ? "#222734" : "#E6E9F1"
-    readonly property color border:    dark ? "#232835" : "#E0E3EB"
-    readonly property color borderStrong: dark ? "#2E3445" : "#CDD2DE"
-    readonly property color overlay:   dark ? Qt.rgba(0.02, 0.02, 0.05, 0.62) : Qt.rgba(0.09, 0.1, 0.16, 0.28)
+    // Surfaces — elevation, not decoration.
+    readonly property color bg:        dark ? "#131417" : "#F6F6F4"
+    readonly property color sidebar:   dark ? "#0F1013" : "#EFEFEC"
+    readonly property color surface:   dark ? "#1A1C20" : "#FFFFFF"
+    readonly property color surface2:  dark ? "#22242A" : "#F3F3EF"
+    readonly property color surface3:  dark ? "#2B2E35" : "#E9E9E3"
+    readonly property color border:    dark ? "#24262B" : "#E4E4DD"
+    readonly property color borderStrong: dark ? "#343842" : "#D1D1C8"
+    readonly property color overlay:   dark ? Qt.rgba(0.02, 0.02, 0.04, 0.66) : Qt.rgba(0.10, 0.10, 0.12, 0.30)
 
     // Text
-    readonly property color text:      dark ? "#ECEEF4" : "#12141B"
-    readonly property color textDim:   dark ? "#8D94A7" : "#5C6377"
-    readonly property color textFaint: dark ? "#5A6175" : "#9AA0B1"
+    readonly property color text:      dark ? "#ECEDEF" : "#1A1B1E"
+    readonly property color textDim:   dark ? "#969AA3" : "#5E616A"
+    readonly property color textFaint: dark ? "#5C606A" : "#9A9DA4"
 
-    // Accent + semantic
-    readonly property color accent:      dark ? "#8B7CFF" : "#5B4BF5"
-    readonly property color accentHover: dark ? "#9D90FF" : "#4C3BEA"
-    readonly property color accentSoft:  Qt.rgba(accent.r, accent.g, accent.b, dark ? 0.16 : 0.11)
-    readonly property color accent2:     "#22D3EE"
-    readonly property color success:     "#34D399"
-    readonly property color warning:     "#FBBF24"
-    readonly property color danger:      "#F87171"
-    readonly property color dangerSoft:  Qt.rgba(0.97, 0.44, 0.44, 0.14)
-    readonly property color accentInk:    "#FFFFFF"
+    // Accent — one calm azure, spent sparingly.
+    readonly property color accent:      dark ? "#6E93FF" : "#3A63E0"
+    readonly property color accentHover: dark ? "#88A6FF" : "#2E52C8"
+    readonly property color accentSoft:  Qt.rgba(accent.r, accent.g, accent.b, dark ? 0.15 : 0.10)
+    readonly property color accent2:     dark ? "#7FE3C6" : "#2FA98A"  // paired tone for the brand mark
+    readonly property color accentInk:   "#FFFFFF"
 
-    // Shape
-    readonly property int radiusSm: 6
-    readonly property int radius: 10
-    readonly property int radiusLg: 14
-    readonly property int radiusXl: 20
+    // Semantic — green means connected; it is not used decoratively.
+    readonly property color success:     dark ? "#46C78E" : "#1F9D6B"
+    readonly property color warning:     dark ? "#E7B64B" : "#C2881C"
+    readonly property color danger:      dark ? "#F1766B" : "#D9564A"
+    readonly property color dangerSoft:  Qt.rgba(danger.r, danger.g, danger.b, dark ? 0.16 : 0.12)
 
-    // Type
+    // Elevation
+    readonly property color shadow:      Qt.rgba(0, 0, 0, dark ? 0.52 : 0.12)
+
+    // Shape — soft, with hierarchy.
+    readonly property int radiusSm: 7
+    readonly property int radius: 11
+    readonly property int radiusLg: 16
+    readonly property int radiusXl: 22
+
+    // Type — system sans, intentional scale; mono only for real telemetry.
     readonly property string fontFamily: Qt.platform.os === "osx" ? Qt.application.font.family
         : Qt.platform.os === "windows" ? "Segoe UI Variable Text" : "Inter"
-    readonly property string monoFamily: Qt.platform.os === "osx" ? "SF Mono"
+    readonly property string monoFamily: Qt.platform.os === "osx" ? "Menlo"
         : Qt.platform.os === "windows" ? "Cascadia Mono" : "JetBrains Mono"
     readonly property int fontXs: 11
     readonly property int fontSm: 12
     readonly property int fontMd: 13
     readonly property int fontLg: 15
-    readonly property int fontXl: 20
-    readonly property int fontHero: 30
+    readonly property int fontXl: 21
+    readonly property int fontHero: 34
 
-    // Motion: short and springy for direct feedback, longer for layout.
-    readonly property int fast: 120
-    readonly property int normal: 200
-    readonly property int slow: 320
+    // Motion — unhurried and smooth; action-driven, not decorative.
+    readonly property int fast: 130
+    readonly property int normal: 220
+    readonly property int slow: 380
     readonly property int easing: Easing.OutCubic
-    readonly property int easingEmph: Easing.OutBack
+    readonly property int easingEmph: Easing.OutQuint
 
     // Shortcut sequences. While a session has focus, Cmd (macOS) or
     // Ctrl+Alt (elsewhere) combos stay with the app; everything else goes remote.

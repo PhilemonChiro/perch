@@ -29,45 +29,6 @@ Item {
         return qsTr("%1 d ago").arg(Math.floor(s / 86400))
     }
 
-    // Ambient backdrop: two slow-drifting soft glows.
-    component Glow: Shape {
-        id: glow
-        property color tint
-        property real strength
-        width: 760; height: 760
-        preferredRendererType: Shape.CurveRenderer
-        ShapePath {
-            strokeColor: "transparent"
-            fillGradient: RadialGradient {
-                centerX: 380; centerY: 380; centerRadius: 380
-                focalX: 380; focalY: 380
-                GradientStop { position: 0; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, glow.strength) }
-                GradientStop { position: 1; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, 0) }
-            }
-            PathAngleArc { centerX: 380; centerY: 380; radiusX: 380; radiusY: 380; startAngle: 0; sweepAngle: 360 }
-        }
-    }
-    Glow {
-        tint: Theme.accent
-        strength: Theme.dark ? 0.28 : 0.16
-        x: root.width * 0.1; y: -360
-        SequentialAnimation on x {
-            loops: Animation.Infinite
-            NumberAnimation { to: root.width * 0.3; duration: 14000; easing.type: Easing.InOutSine }
-            NumberAnimation { to: root.width * 0.05; duration: 14000; easing.type: Easing.InOutSine }
-        }
-    }
-    Glow {
-        tint: Theme.accent2
-        strength: Theme.dark ? 0.14 : 0.12
-        x: root.width * 0.55; y: root.height * 0.4
-        SequentialAnimation on y {
-            loops: Animation.Infinite
-            NumberAnimation { to: root.height * 0.25; duration: 11000; easing.type: Easing.InOutSine }
-            NumberAnimation { to: root.height * 0.5; duration: 11000; easing.type: Easing.InOutSine }
-        }
-    }
-
     Flickable {
         anchors.fill: parent
         contentHeight: content.implicitHeight + 120
