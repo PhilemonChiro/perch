@@ -8,6 +8,10 @@
 
 Built with Qt 6 and FreeRDP 3.
 
+![License](https://img.shields.io/badge/license-Apache%202.0-blue)
+![Platforms](https://img.shields.io/badge/platforms-macOS%20·%20Windows%20·%20Linux-informational)
+![Built with](https://img.shields.io/badge/built%20with-Qt%206%20%2B%20FreeRDP%203-6E93FF)
+
 </div>
 
 ---
@@ -107,4 +111,7 @@ and multi-monitor are on the roadmap.
 
 ## License
 
-Released under the [MIT License](LICENSE). Copyright © 2026 Philemon Chiro.
+Released under the [Apache License 2.0](LICENSE). Copyright © 2026 Philemon Chiro.
+
+If you use Perch or build on it, you must retain the attribution in [NOTICE](NOTICE)
+(Apache-2.0 §4). The license also includes an explicit patent grant.
