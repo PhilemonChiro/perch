@@ -17,6 +17,8 @@ Popup {
     padding: 0
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
+    Connections { target: CredentialStore; function onChanged() { root.refreshCreds() } }
+
     signal saved(string name, bool connect, string id)
     signal deleted(string name)
 
@@ -25,12 +27,28 @@ Popup {
     readonly property bool editing: editId !== ""
     property var folderChoices: []
     property string sharePath: ""
+    property string credentialId: ""
+    property var credChoices: []
+    signal manageCredentials()
+
+    function refreshCreds() {
+        const saved = CredentialStore.list().map(c => ({ id: c.id, label: c.label + "  ·  " + (c.domain ? c.domain + "\\" : "") + c.username }))
+        credChoices = [{ id: "", label: qsTr("Enter manually") }].concat(saved).concat([{ id: "__manage__", label: qsTr("Manage credentials…") }])
+        syncCred()
+    }
+    function credIndex(id) {
+        for (let i = 0; i < credChoices.length; ++i) if (credChoices[i].id === id) return i
+        return 0
+    }
+    function syncCred() { credBox.currentIndex = credIndex(credentialId) }
 
     function reset() {
         nameF.text = ""; hostF.text = ""; portF.text = "3389"; userF.text = ""; passF.text = ""; gatewayF.text = ""
         sharePath = ""
+        credentialId = ""
         hostF.error = false
         folderChoices = [{ id: "", name: qsTr("No folder"), depth: 0 }].concat(ConnectionStore.folders())
+        refreshCreds()
     }
     function selectFolder(id) {
         for (let i = 0; i < folderChoices.length; ++i)
@@ -49,6 +67,8 @@ Popup {
         userF.text = h.domain ? (h.domain + "\\" + h.username) : h.username
         gatewayF.text = h.gateway || ""
         sharePath = h.share || ""
+        credentialId = h.credentialId || ""
+        syncCred()
         selectFolder(h.folderId)
         open()
     }
@@ -62,7 +82,8 @@ Popup {
         if (!hostF.text.trim()) { hostF.error = true; shake.restart(); hostF.focusInput(); return }
         const id = ConnectionStore.saveHost({
             id: editId, name: nameF.text, host: hostF.text, port: parseInt(portF.text) || 3389,
-            username: userF.text, domain: "", share: sharePath, gateway: gatewayF.text,
+            username: credentialId === "" ? userF.text : "", domain: "",
+            share: sharePath, gateway: gatewayF.text, credentialId: credentialId,
             folderId: folderChoices[folderBox.currentIndex] ? folderChoices[folderBox.currentIndex].id : ""
         })
         const pass = passF.text
@@ -167,9 +188,53 @@ Popup {
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 4 }
                 Text { text: qsTr("CREDENTIALS"); color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold; font.letterSpacing: 0.8 }
 
-                Field { id: userF; Layout.fillWidth: true; label: qsTr("Username"); placeholder: qsTr("administrator  or  DOMAIN\\user"); onAccepted: root.save(false) }
+                // Pick a saved credential set, or enter one inline.
+                ComboBox {
+                    id: credBox
+                    Layout.fillWidth: true
+                    height: 38
+                    model: root.credChoices
+                    textRole: "label"
+                    onActivated: (i) => {
+                        const v = root.credChoices[i] ? root.credChoices[i].id : ""
+                        if (v === "__manage__") { root.syncCred(); root.manageCredentials() }
+                        else root.credentialId = v
+                    }
+                    delegate: ItemDelegate {
+                        id: cd
+                        required property var modelData
+                        required property int index
+                        width: credBox.width - 12; x: 6; height: 32
+                        highlighted: credBox.highlightedIndex === index
+                        contentItem: Text { leftPadding: 6; text: cd.modelData.label
+                            color: cd.modelData.id === "__manage__" ? Theme.accent : Theme.text
+                            font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                        background: Rectangle { radius: Theme.radiusSm; color: cd.highlighted ? Theme.surface3 : "transparent" }
+                    }
+                    contentItem: Text { leftPadding: 12; text: credBox.displayText; color: Theme.text; font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; rightPadding: 28 }
+                    indicator: Icon {
+                        x: credBox.width - width - 12; y: (credBox.height - height) / 2
+                        name: "chevron"; size: 12; color: Theme.textFaint
+                        rotation: credBox.popup.visible ? -90 : 90
+                        Behavior on rotation { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutBack } }
+                    }
+                    background: Rectangle {
+                        radius: Theme.radius; color: Theme.surface2
+                        border.color: credBox.popup.visible || credBox.activeFocus ? Theme.accent : credBox.hovered ? Theme.borderStrong : Theme.border
+                        Behavior on border.color { ColorAnimation { duration: Theme.fast } }
+                    }
+                    popup: Popup {
+                        y: credBox.height + 4; width: credBox.width
+                        implicitHeight: Math.min(contentItem.implicitHeight + 12, 280); padding: 6
+                        contentItem: ListView { clip: true; implicitHeight: contentHeight; model: credBox.popup.visible ? credBox.delegateModel : null; currentIndex: credBox.highlightedIndex }
+                        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+                    }
+                }
+
+                Field { id: userF; visible: root.credentialId === ""; Layout.fillWidth: true; label: qsTr("Username"); placeholder: qsTr("administrator  or  DOMAIN\\user"); onAccepted: root.save(false) }
                 Field {
                     id: passF
+                    visible: root.credentialId === ""
                     Layout.fillWidth: true
                     label: qsTr("Password")
                     password: true

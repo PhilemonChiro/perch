@@ -26,6 +26,7 @@ qt_add_qml_module(relay
     SOURCES
         src/ConnectionStore.h src/ConnectionStore.cpp
         src/Credentials.h src/Credentials.cpp
+        src/CredentialStore.h src/CredentialStore.cpp
         src/SessionManager.h src/SessionManager.cpp
         src/RdpSession.h src/RdpSession.cpp
         src/RdpView.h src/RdpView.cpp
@@ -38,6 +39,7 @@ qt_add_qml_module(relay
         qml/SessionPage.qml
         qml/CommandPalette.qml
         qml/ConnectionEditor.qml
+        qml/CredentialManager.qml
         qml/components/Icon.qml
         qml/components/IconButton.qml
         qml/components/PrimaryButton.qml

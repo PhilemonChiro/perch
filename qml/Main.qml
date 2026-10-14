@@ -181,7 +181,10 @@ ApplicationWindow {
             if (connect) SessionManager.openHost(id)
         }
         onDeleted: name => win.toast(qsTr("Deleted %1").arg(name))
+        onManageCredentials: credManager.openManager()
     }
+
+    CredentialManager { id: credManager }
 
     Toast {
         id: toaster

@@ -65,7 +65,7 @@ private:
         bool expanded = true;
     };
     struct Host {
-        QString id, name, host, username, domain, folderId, share, gateway;
+        QString id, name, host, username, domain, folderId, share, gateway, credentialId;
         int port = 3389;
         qint64 lastConnected = 0;
     };

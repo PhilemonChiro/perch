@@ -1,6 +1,7 @@
 #include "SessionManager.h"
 
 #include "ConnectionStore.h"
+#include "CredentialStore.h"
 #include "Credentials.h"
 #include "RdpSession.h"
 
@@ -93,14 +94,26 @@ int SessionManager::openHost(const QString& hostId)
     const QVariantMap h = ConnectionStore::instance()->host(hostId);
     if (h.isEmpty())
         return -1;
+    // A connection may reference a saved credential set; otherwise it uses its
+    // own inline username/domain with the password stored under the host id.
+    QString username = h.value("username").toString();
+    QString domain = h.value("domain").toString();
+    QString passwordKey = hostId;
+    if (const QString credId = h.value("credentialId").toString(); !credId.isEmpty()) {
+        const QVariantMap cred = CredentialStore::instance()->get(credId);
+        if (!cred.isEmpty()) {
+            username = cred.value("username").toString();
+            domain = cred.value("domain").toString();
+            passwordKey = CredentialStore::keychainKey(credId);
+        }
+    }
     auto* s = new RdpSession(hostId, h.value("name").toString(), h.value("host").toString(),
-                             h.value("port").toInt(), h.value("username").toString(),
-                             h.value("domain").toString(), this);
+                             h.value("port").toInt(), username, domain, this);
     s->setSharedFolder(h.value("share").toString());
     s->setGateway(h.value("gateway").toString());
     const int row = add(s);
     QPointer<RdpSession> guard(s);
-    Credentials::read(hostId, [guard](bool found, const QString& password) {
+    Credentials::read(passwordKey, [guard](bool found, const QString& password) {
         if (!guard)
             return;
         if (found && !guard->username().isEmpty())
