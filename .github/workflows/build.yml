@@ -1,8 +1,8 @@
 name: build
 
 on:
-  push:
   pull_request:
+  workflow_dispatch:
 
 env:
   QT_VERSION: "6.9.3"
@@ -35,10 +35,13 @@ jobs:
       # --- FreeRDP 3 ---
       - name: FreeRDP (macOS)
         if: runner.os == 'macOS'
-        # The runner image pins an older Homebrew local tap (FreeRDP 3.31.0).
-        # Install from Homebrew's API instead, which reflects the latest formula
-        # (>= 3.32.0, the SECURITY.md floor), without a slow/hanging `brew update`.
-        run: env -u HOMEBREW_NO_INSTALL_FROM_API brew install freerdp ninja
+        # The runner image ships a pinned local homebrew/core tap (FreeRDP
+        # 3.31.0), which `brew install` prefers over the API. Untap it so the
+        # install resolves from Homebrew's API (currently 3.32.2, >= the
+        # SECURITY.md floor) without a slow/hanging `brew update`.
+        run: |
+          brew untap --force homebrew/core homebrew/cask || true
+          brew install freerdp ninja
 
       - name: FreeRDP (Linux)
         if: runner.os == 'Linux'
