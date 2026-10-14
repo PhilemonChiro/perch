@@ -37,7 +37,12 @@ jobs:
 
       - name: FreeRDP (macOS)
         if: runner.os == 'macOS'
-        run: brew install freerdp ninja
+        # The runner image pins an older Homebrew formula index (FreeRDP 3.31.0),
+        # and GitHub sets HOMEBREW_NO_AUTO_UPDATE=1, so refresh it explicitly to
+        # get >= 3.32.0 (the SECURITY.md floor).
+        run: |
+          brew update
+          brew install freerdp ninja
 
       - name: FreeRDP (Linux)
         if: runner.os == 'Linux'
