@@ -29,11 +29,14 @@ Popup {
     property string sharePath: ""
     property string credentialId: ""
     property var credChoices: []
-    signal manageCredentials()
+    signal manageCredentials(bool addNew)
 
     function refreshCreds() {
-        const saved = CredentialStore.list().map(c => ({ id: c.id, label: c.label + "  ·  " + (c.domain ? c.domain + "\\" : "") + c.username }))
-        credChoices = [{ id: "", label: qsTr("Enter manually") }].concat(saved).concat([{ id: "__manage__", label: qsTr("Manage credentials…") }])
+        const saved = CredentialStore.list().map(c => ({ id: c.id, label: c.label, sub: (c.domain ? c.domain + "\\" : "") + c.username }))
+        credChoices = [{ id: "", label: qsTr("Enter manually"), sub: "" }]
+            .concat(saved)
+            .concat([{ id: "__new__", label: qsTr("New credential…"), sub: "" },
+                     { id: "__manage__", label: qsTr("Manage credentials…"), sub: "" }])
         syncCred()
     }
     function credIndex(id) {
@@ -192,26 +195,52 @@ Popup {
                 ComboBox {
                     id: credBox
                     Layout.fillWidth: true
-                    height: 38
+                    height: 46
                     model: root.credChoices
                     textRole: "label"
+                    readonly property var sel: root.credChoices[currentIndex] || root.credChoices[0]
                     onActivated: (i) => {
                         const v = root.credChoices[i] ? root.credChoices[i].id : ""
-                        if (v === "__manage__") { root.syncCred(); root.manageCredentials() }
+                        if (v === "__manage__") { root.syncCred(); root.manageCredentials(false) }
+                        else if (v === "__new__") { root.syncCred(); root.manageCredentials(true) }
                         else root.credentialId = v
                     }
                     delegate: ItemDelegate {
                         id: cd
                         required property var modelData
                         required property int index
-                        width: credBox.width - 12; x: 6; height: 32
+                        readonly property bool actionRow: cd.modelData.id === "__manage__" || cd.modelData.id === "__new__"
+                        width: credBox.width - 12; x: 6
+                        height: actionRow || !cd.modelData.sub ? 34 : 44
                         highlighted: credBox.highlightedIndex === index
-                        contentItem: Text { leftPadding: 6; text: cd.modelData.label
-                            color: cd.modelData.id === "__manage__" ? Theme.accent : Theme.text
-                            font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                        contentItem: RowLayout {
+                            spacing: 10
+                            Icon {
+                                Layout.leftMargin: 6
+                                name: cd.modelData.id === "__new__" ? "plus" : cd.modelData.id === "__manage__" ? "pencil" : "lock"
+                                size: 14
+                                color: cd.actionRow ? Theme.accent : Theme.textDim
+                            }
+                            Column {
+                                Layout.fillWidth: true
+                                spacing: 1
+                                Text { text: cd.modelData.label; color: cd.actionRow ? Theme.accent : Theme.text; font.pixelSize: Theme.fontMd; elide: Text.ElideRight; width: parent.width }
+                                Text { visible: cd.modelData.sub !== ""; text: cd.modelData.sub; color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily; elide: Text.ElideRight; width: parent.width }
+                            }
+                        }
                         background: Rectangle { radius: Theme.radiusSm; color: cd.highlighted ? Theme.surface3 : "transparent" }
                     }
-                    contentItem: Text { leftPadding: 12; text: credBox.displayText; color: Theme.text; font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight; rightPadding: 28 }
+                    contentItem: RowLayout {
+                        spacing: 10
+                        Icon { Layout.leftMargin: 12; name: "lock"; size: 15; color: root.credentialId === "" ? Theme.textDim : Theme.accent }
+                        Column {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Text { text: credBox.sel ? credBox.sel.label : ""; color: Theme.text; font.pixelSize: Theme.fontMd; elide: Text.ElideRight; width: parent.width }
+                            Text { visible: !!(credBox.sel && credBox.sel.sub); text: credBox.sel && credBox.sel.sub ? credBox.sel.sub : ""; color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily; elide: Text.ElideRight; width: parent.width }
+                        }
+                        Item { Layout.preferredWidth: 20 }
+                    }
                     indicator: Icon {
                         x: credBox.width - width - 12; y: (credBox.height - height) / 2
                         name: "chevron"; size: 12; color: Theme.textFaint
@@ -225,7 +254,7 @@ Popup {
                     }
                     popup: Popup {
                         y: credBox.height + 4; width: credBox.width
-                        implicitHeight: Math.min(contentItem.implicitHeight + 12, 280); padding: 6
+                        implicitHeight: Math.min(contentItem.implicitHeight + 12, 320); padding: 6
                         contentItem: ListView { clip: true; implicitHeight: contentHeight; model: credBox.popup.visible ? credBox.delegateModel : null; currentIndex: credBox.highlightedIndex }
                         background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
                     }

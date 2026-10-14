@@ -172,6 +172,7 @@ ApplicationWindow {
         onNewFolder: { ConnectionStore.addFolder(qsTr("New folder"), ""); win.sidebarPinned = true }
         onGoHome: win.current = -1
         onToggleTheme: Theme.mode = Theme.dark ? "light" : "dark"
+        onManageCredentials: credManager.openManager()
     }
 
     ConnectionEditor {
@@ -181,7 +182,7 @@ ApplicationWindow {
             if (connect) SessionManager.openHost(id)
         }
         onDeleted: name => win.toast(qsTr("Deleted %1").arg(name))
-        onManageCredentials: credManager.openManager()
+        onManageCredentials: (addNew) => { credManager.openManager(); if (addNew) credManager.startAdd() }
     }
 
     CredentialManager { id: credManager }

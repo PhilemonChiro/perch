@@ -23,6 +23,7 @@ Popup {
     signal goHome()
     signal toggleTheme()
     signal sendCad()
+    signal manageCredentials()
     property bool sessionActive: false
 
     function toggle() { opened ? close() : open() }
@@ -47,6 +48,7 @@ Popup {
         const actions = [
             { kind: "action", title: qsTr("New connection"), subtitle: Theme.modLabel + "N", icon: "plus", value: "new" },
             { kind: "action", title: qsTr("New folder"), subtitle: "", icon: "folder-plus", value: "folder" },
+            { kind: "action", title: qsTr("Manage credentials"), subtitle: "", icon: "lock", value: "creds" },
             { kind: "action", title: qsTr("Go home"), subtitle: Theme.modLabel + "0", icon: "home", value: "home" },
             { kind: "action", title: Theme.dark ? qsTr("Switch to light theme") : qsTr("Switch to dark theme"), subtitle: "", icon: "refresh", value: "theme" }
         ]
@@ -69,6 +71,7 @@ Popup {
         else if (it.value === "home") goHome()
         else if (it.value === "theme") toggleTheme()
         else if (it.value === "cad") sendCad()
+        else if (it.value === "creds") manageCredentials()
     }
 
     onAboutToShow: { field.text = ""; refresh() }
