@@ -22,6 +22,8 @@ Popup {
     signal newFolder()
     signal goHome()
     signal toggleTheme()
+    signal sendCad()
+    property bool sessionActive: false
 
     function toggle() { opened ? close() : open() }
 
@@ -48,6 +50,8 @@ Popup {
             { kind: "action", title: qsTr("Go home"), subtitle: Theme.modLabel + "0", icon: "home", value: "home" },
             { kind: "action", title: Theme.dark ? qsTr("Switch to light theme") : qsTr("Switch to dark theme"), subtitle: "", icon: "refresh", value: "theme" }
         ]
+        if (root.sessionActive)
+            actions.unshift({ kind: "action", title: qsTr("Send Ctrl+Alt+Del"), subtitle: "Ctrl+Alt+End", icon: "zap", value: "cad" })
         for (const a of actions)
             if (!q || a.title.toLowerCase().indexOf(q.toLowerCase()) >= 0) out.push(a)
         items = out
@@ -64,6 +68,7 @@ Popup {
         else if (it.value === "folder") newFolder()
         else if (it.value === "home") goHome()
         else if (it.value === "theme") toggleTheme()
+        else if (it.value === "cad") sendCad()
     }
 
     onAboutToShow: { field.text = ""; refresh() }

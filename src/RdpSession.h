@@ -88,6 +88,8 @@ public:
     void setViewport(const QSize& physicalPixels, qreal devicePixelRatio);
     void sendMouse(quint16 flags, const QPointF& remotePos);
     void sendKey(bool down, bool repeat, quint32 rdpScancode);
+    // Sends Ctrl+Alt+Del to the remote (the local OS swallows the real combo).
+    Q_INVOKABLE void sendCtrlAltDel();
     void setLocalClipboard(const QString& text);
 
 signals:

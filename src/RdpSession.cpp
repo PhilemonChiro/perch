@@ -15,6 +15,7 @@
 #include <freerdp/event.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
+#include <freerdp/scancode.h>
 #include <freerdp/settings.h>
 #include <winpr/synch.h>
 #include <winpr/user.h>
@@ -906,4 +907,19 @@ void RdpSession::sendKey(bool down, bool repeat, quint32 rdpScancode)
     if (!m_live || !m_context)
         return;
     freerdp_input_send_keyboard_event_ex(m_context->input, down, repeat, rdpScancode);
+}
+
+void RdpSession::sendCtrlAltDel()
+{
+    QMutexLocker lock(&m_contextMutex);
+    if (!m_live || !m_context)
+        return;
+    rdpInput* in = m_context->input;
+    // The local OS swallows the real Ctrl+Alt+Del, so send the scancodes directly.
+    freerdp_input_send_keyboard_event_ex(in, TRUE, FALSE, RDP_SCANCODE_LCONTROL);
+    freerdp_input_send_keyboard_event_ex(in, TRUE, FALSE, RDP_SCANCODE_LMENU);
+    freerdp_input_send_keyboard_event_ex(in, TRUE, FALSE, RDP_SCANCODE_DELETE);
+    freerdp_input_send_keyboard_event_ex(in, FALSE, FALSE, RDP_SCANCODE_DELETE);
+    freerdp_input_send_keyboard_event_ex(in, FALSE, FALSE, RDP_SCANCODE_LMENU);
+    freerdp_input_send_keyboard_event_ex(in, FALSE, FALSE, RDP_SCANCODE_LCONTROL);
 }

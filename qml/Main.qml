@@ -47,6 +47,12 @@ ApplicationWindow {
     Shortcut { sequence: Theme.seq("W"); context: Qt.ApplicationShortcut; onActivated: win.closeTab(win.current) }
     Shortcut { sequence: Theme.seq("B"); context: Qt.ApplicationShortcut; onActivated: win.sidebarPinned = !win.sidebarPinned }
     Shortcut { sequence: Theme.seq("Return"); context: Qt.ApplicationShortcut; onActivated: win.toggleFullscreen() }
+    // Ctrl+Alt+End is the universal "send Ctrl+Alt+Del to the remote" binding
+    // (the OS intercepts the real combo, but not this one).
+    Shortcut {
+        sequence: "Ctrl+Alt+End"; context: Qt.ApplicationShortcut
+        onActivated: { const s = win.current >= 0 ? SessionManager.at(win.current) : null; if (s) s.sendCtrlAltDel() }
+    }
     Shortcut {
         sequence: Theme.seq("]"); context: Qt.ApplicationShortcut
         onActivated: if (SessionManager.count) win.current = (win.current + 1) % SessionManager.count
@@ -156,6 +162,8 @@ ApplicationWindow {
 
     CommandPalette {
         id: palette
+        sessionActive: win.current >= 0
+        onSendCad: { const s = win.current >= 0 ? SessionManager.at(win.current) : null; if (s) s.sendCtrlAltDel() }
         onConnectHost: id => SessionManager.openHost(id)
         onQuickConnect: text => {
             if (SessionManager.quickConnect(text) < 0) win.toast(qsTr("That doesn’t look like a host address"), "error")
