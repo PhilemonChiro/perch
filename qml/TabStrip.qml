@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import Relay
 
@@ -10,10 +11,54 @@ Rectangle {
 
     property int current: -1
     property bool sidebarOpen: true
+    readonly property var activeSession: (current >= 0 && current < SessionManager.count) ? SessionManager.at(current) : null
+    readonly property bool sessionLive: activeSession && activeSession.state === RdpSession.Connected
     signal select(int index)
     signal closeTab(int index)
     signal showSidebar()
     signal newTab()
+    signal fullscreen()
+    signal toast(string message, string kind)
+
+    function folderName(path) {
+        if (!path) return ""
+        const p = path.replace(/[\/\\]+$/, "")
+        const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"))
+        return i >= 0 ? p.substring(i + 1) : p
+    }
+    function applyShare(path) {
+        if (!activeSession) return
+        activeSession.shareFolder(path)
+        if (activeSession.hostId !== "")
+            ConnectionStore.setShare(activeSession.hostId, path)
+        root.toast(path ? qsTr("Mounting “%1”…").arg(folderName(path))
+                        : qsTr("Unmounting shared folder…"), "info")
+    }
+
+    FolderDialog {
+        id: tsFolderDialog
+        title: qsTr("Share a folder into this session")
+        onAccepted: root.applyShare(ConnectionStore.toLocalPath(selectedFolder))
+    }
+    Menu {
+        id: tsMountMenu
+        padding: 6
+        background: Rectangle { implicitWidth: 220; radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+        enter: Transition { ParallelAnimation {
+            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.fast }
+            NumberAnimation { property: "scale"; from: 0.96; to: 1; duration: Theme.normal; easing.type: Theme.easing } } }
+        exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 80 } }
+        delegate: MenuItem {
+            id: tmi
+            implicitHeight: 30
+            readonly property bool danger: text === qsTr("Unmount folder")
+            contentItem: Text { leftPadding: 4; text: tmi.text; color: tmi.danger ? Theme.danger : Theme.text; font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter }
+            background: Rectangle { radius: Theme.radiusSm; color: tmi.highlighted ? (tmi.danger ? Theme.dangerSoft : Theme.surface3) : "transparent" }
+        }
+        Action { text: qsTr("Change folder…"); onTriggered: tsFolderDialog.open() }
+        MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: Theme.border } }
+        Action { text: qsTr("Unmount folder"); onTriggered: root.applyShare("") }
+    }
 
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
 
@@ -137,6 +182,41 @@ Rectangle {
                 }
             }
         }
+
+        // Contextual controls for the active session.
+        Row {
+            spacing: 2
+            visible: root.activeSession !== null
+            Rectangle { width: 1; height: 18; color: Theme.border; anchors.verticalCenter: parent.verticalCenter }
+            IconButton {
+                id: tsShare
+                iconName: "folder"; iconSize: 15
+                enabled: root.sessionLive
+                opacity: enabled ? 1 : 0.4
+                readonly property string shared: root.activeSession ? root.activeSession.sharedFolder : ""
+                checked: shared !== ""
+                tip: shared !== "" ? qsTr("Sharing “%1” — click to change").arg(root.folderName(shared))
+                                   : qsTr("Share a folder into this session")
+                onClicked: shared !== "" ? tsMountMenu.popup(tsShare, 0, tsShare.height + 4) : tsFolderDialog.open()
+                Rectangle {
+                    visible: tsShare.checked
+                    width: 5; height: 5; radius: 3; color: Theme.accent
+                    anchors { right: parent.right; top: parent.top; rightMargin: 5; topMargin: 5 }
+                }
+            }
+            IconButton {
+                iconName: "expand"; iconSize: 15
+                tip: qsTr("Full screen  %1↵").arg(Theme.modLabel)
+                onClicked: root.fullscreen()
+            }
+            IconButton {
+                iconName: "power"; iconSize: 15; danger: true
+                tip: qsTr("Disconnect  %1W").arg(Theme.modLabel)
+                onClicked: if (root.activeSession) root.activeSession.disconnect()
+            }
+        }
+
+        Rectangle { width: 1; height: 18; color: Theme.border; visible: root.activeSession !== null }
 
         IconButton {
             iconName: "plus"

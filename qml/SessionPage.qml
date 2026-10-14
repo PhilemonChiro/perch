@@ -10,6 +10,7 @@ Item {
     clip: true
     property var sessionObj
     property bool active: false
+    property bool fullscreen: false  // windowed controls live in the tab strip
     signal closeRequested()
     signal fullscreenRequested()
     signal saveRequested()
@@ -37,9 +38,10 @@ Item {
 
     onLiveChanged: {
         if (live && active) view.forceActiveFocus()
-        if (live) { hotZone.introReveal = true; introTimer.restart() }
+        if (live && fullscreen) { hotZone.introReveal = true; introTimer.restart() }
     }
     onActiveChanged: if (active && live) view.forceActiveFocus()
+    onFullscreenChanged: if (fullscreen && live) { hotZone.introReveal = true; introTimer.restart() }
 
     // Backdrop shown until the first frame arrives.
     Rectangle {
@@ -62,64 +64,23 @@ Item {
         }
     }
 
-    // Floating session toolbar: auto-reveals on connect, then slides up; a faint
-    // grab handle at the top invites hovering to bring it back.
+    // Fullscreen-only floating toolbar: the tab strip is hidden there, so a thin
+    // bar slides down from the top edge on hover (and briefly on connect).
     Rectangle {
         id: hotZone
         anchors.top: parent.top
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.max(toolbar.width + 80, 360)
-        height: toolbarShown ? toolbar.height + 24 : 22
+        height: toolbarShown ? toolbar.height + 24 : 12
         color: "transparent"
-        visible: page.live
+        visible: page.live && page.fullscreen
         property bool introReveal: false
         property bool toolbarShown: zoneHover.hovered || toolbarHover.hovered || introReveal
         HoverHandler { id: zoneHover }
     }
 
-    // Brief auto-reveal when the session becomes live, so the toolbar is discoverable.
+    // Brief auto-reveal when entering a live fullscreen session.
     Timer { id: introTimer; interval: 2800; onTriggered: hotZone.introReveal = false }
-
-    // Always-visible pull-tab that reveals the toolbar; clickable (not just hover)
-    // and labelled, so the controls are discoverable.
-    Rectangle {
-        id: handle
-        anchors.horizontalCenter: parent.horizontalCenter
-        y: page.live && toolbar.y < 0 ? 0 : -height - 2
-        Behavior on y { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutBack } }
-        width: 80; height: 20
-        radius: 10
-        color: handleHover.hovered ? Theme.surface3 : Qt.rgba(Theme.surface2.r, Theme.surface2.g, Theme.surface2.b, 0.92)
-        border.color: Theme.border
-        Behavior on color { ColorAnimation { duration: Theme.fast } }
-
-        HoverHandler { id: handleHover }
-        TapHandler { onTapped: { hotZone.introReveal = true; introTimer.restart() } }
-
-        Icon {
-            anchors.centerIn: parent
-            name: "chevron"; size: 13; rotation: 90
-            color: handleHover.hovered ? Theme.text : Theme.textDim
-            Behavior on color { ColorAnimation { duration: Theme.fast } }
-            // Gentle bob to draw the eye toward the pull-tab.
-            SequentialAnimation on anchors.verticalCenterOffset {
-                running: handle.y >= 0 && !handleHover.hovered
-                loops: Animation.Infinite
-                NumberAnimation { to: 2; duration: 900; easing.type: Easing.InOutSine }
-                NumberAnimation { to: -1; duration: 900; easing.type: Easing.InOutSine }
-            }
-        }
-
-        ToolTip {
-            visible: handleHover.hovered
-            delay: 300
-            text: qsTr("Session controls")
-            y: handle.height + 4
-            padding: 6
-            contentItem: Text { text: qsTr("Session controls"); color: Theme.text; font.pixelSize: Theme.fontSm; font.family: Theme.fontFamily }
-            background: Rectangle { color: Theme.surface3; radius: Theme.radiusSm; border.color: Theme.borderStrong }
-        }
-    }
 
     // Elevation under the toolbar, following its slide.
     RectangularShadow {
@@ -132,9 +93,9 @@ Item {
     Rectangle {
         id: toolbar
         anchors.horizontalCenter: parent.horizontalCenter
-        visible: page.live || y > -height
-        y: hotZone.toolbarShown && page.live ? 10 : -height - 12
-        Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutBack; easing.overshoot: 1.2 } }
+        visible: (page.live && page.fullscreen) || y > -height
+        y: hotZone.toolbarShown && page.live && page.fullscreen ? 10 : -height - 12
+        Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutQuint } }
         width: tbRow.implicitWidth + 16
         height: 40
         radius: 20

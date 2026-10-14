@@ -108,6 +108,8 @@ ApplicationWindow {
                 onCloseTab: i => win.closeTab(i)
                 onShowSidebar: win.sidebarPinned = true
                 onNewTab: palette.open()
+                onFullscreen: win.toggleFullscreen()
+                onToast: (m, k) => win.toast(m, k)
             }
 
             Item {
@@ -138,6 +140,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         sessionObj: session
                         active: index === win.current
+                        fullscreen: win.fullscreen
                         opacity: active ? 1 : 0
                         visible: opacity > 0
                         Behavior on opacity { NumberAnimation { duration: Theme.normal } }
