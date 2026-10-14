@@ -25,8 +25,12 @@ Button {
         opacity: root.enabled || root.busy ? 1 : 0.45
         gradient: Gradient {
             orientation: Gradient.Vertical
-            GradientStop { position: 0; color: Qt.lighter(root.base, root.hovered ? 1.18 : 1.08) }
-            GradientStop { position: 1; color: root.hovered ? Qt.lighter(root.base, 1.05) : root.base }
+            // Dark: lift the top for a glossy accent. Light: keep it solid and
+            // saturated (lightening it there reads pale and washes out white text).
+            GradientStop { position: 0; color: Theme.dark ? Qt.lighter(root.base, root.hovered ? 1.18 : 1.08)
+                                                          : (root.hovered ? Qt.lighter(root.base, 1.05) : root.base) }
+            GradientStop { position: 1; color: Theme.dark ? (root.hovered ? Qt.lighter(root.base, 1.05) : root.base)
+                                                          : Qt.darker(root.base, 1.1) }
         }
         // Soft glow that blooms on hover.
         Rectangle {

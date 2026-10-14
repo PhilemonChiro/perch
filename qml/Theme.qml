@@ -11,20 +11,21 @@ QtObject {
     readonly property bool dark: mode === "dark"
         || (mode === "system" && Qt.styleHints.colorScheme !== Qt.ColorScheme.Light)
 
-    // Surfaces — elevation, not decoration.
-    readonly property color bg:        dark ? "#131417" : "#F6F6F4"
-    readonly property color sidebar:   dark ? "#0F1013" : "#EFEFEC"
-    readonly property color surface:   dark ? "#1A1C20" : "#FFFFFF"
-    readonly property color surface2:  dark ? "#22242A" : "#F3F3EF"
-    readonly property color surface3:  dark ? "#2B2E35" : "#E9E9E3"
-    readonly property color border:    dark ? "#24262B" : "#E4E4DD"
-    readonly property color borderStrong: dark ? "#343842" : "#D1D1C8"
-    readonly property color overlay:   dark ? Qt.rgba(0.02, 0.02, 0.04, 0.66) : Qt.rgba(0.10, 0.10, 0.12, 0.30)
+    // Surfaces — elevation, not decoration. In light mode a deeper warm canvas
+    // gives the white surfaces something to sit against, so it isn't washed out.
+    readonly property color bg:        dark ? "#131417" : "#EAE9E3"
+    readonly property color sidebar:   dark ? "#0F1013" : "#E3E2DB"
+    readonly property color surface:   dark ? "#1A1C20" : "#FDFDFC"
+    readonly property color surface2:  dark ? "#22242A" : "#F0EFEA"
+    readonly property color surface3:  dark ? "#2B2E35" : "#E3E2DB"
+    readonly property color border:    dark ? "#24262B" : "#D8D7CE"
+    readonly property color borderStrong: dark ? "#343842" : "#C1C0B5"
+    readonly property color overlay:   dark ? Qt.rgba(0.02, 0.02, 0.04, 0.66) : Qt.rgba(0.12, 0.12, 0.14, 0.34)
 
     // Text
-    readonly property color text:      dark ? "#ECEDEF" : "#1A1B1E"
-    readonly property color textDim:   dark ? "#969AA3" : "#5E616A"
-    readonly property color textFaint: dark ? "#5C606A" : "#9A9DA4"
+    readonly property color text:      dark ? "#ECEDEF" : "#1C1D20"
+    readonly property color textDim:   dark ? "#969AA3" : "#55585F"
+    readonly property color textFaint: dark ? "#5C606A" : "#7B7A70"
 
     // Accent — one calm azure, spent sparingly.
     readonly property color accent:      dark ? "#6E93FF" : "#3A63E0"
