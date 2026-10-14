@@ -90,6 +90,7 @@ ApplicationWindow {
             onEditHost: id => editor.openEdit(id)
             onNewHost: folderId => editor.openNew(folderId)
             onOpenPalette: palette.open()
+            onManageCredentials: credManager.openManager()
             onCollapse: win.sidebarPinned = false
             onToast: (m, k) => win.toast(m, k)
         }
@@ -154,7 +155,10 @@ ApplicationWindow {
                         onFullscreenRequested: win.toggleFullscreen()
                         onSaveRequested: editor.openFromSession(session)
                         onToast: (m, k) => win.toast(m, k)
-                        onManageCredentials: (addNew) => { credManager.openManager(); if (addNew) credManager.startAdd() }
+                        onManageCredentials: (addNew) => {
+                            credManager.openManager()
+                            if (addNew) credManager.startAddInto((id) => SessionManager.reconnectWithCredential(session, id))
+                        }
                     }
                 }
             }
@@ -183,7 +187,10 @@ ApplicationWindow {
             if (connect) SessionManager.openHost(id)
         }
         onDeleted: name => win.toast(qsTr("Deleted %1").arg(name))
-        onManageCredentials: (addNew) => { credManager.openManager(); if (addNew) credManager.startAdd() }
+        onManageCredentials: (addNew) => {
+            credManager.openManager()
+            if (addNew) credManager.startAddInto((id) => editor.credentialId = id)
+        }
     }
 
     CredentialManager { id: credManager }

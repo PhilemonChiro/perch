@@ -11,6 +11,7 @@ Rectangle {
     signal editHost(string id)
     signal newHost(string folderId)
     signal openPalette()
+    signal manageCredentials()
     signal collapse()
     signal toast(string message, string kind)
 
@@ -225,6 +226,11 @@ Rectangle {
                 text: ConnectionStore.hostCount === 1 ? qsTr("1 host") : qsTr("%1 hosts").arg(ConnectionStore.hostCount)
                 color: Theme.textFaint
                 font.pixelSize: Theme.fontXs
+            }
+            IconButton {
+                iconName: "lock"; iconSize: 14; implicitWidth: 26; implicitHeight: 26
+                tip: qsTr("Credentials")
+                onClicked: root.manageCredentials()
             }
             AbstractButton {
                 id: themeBtn

@@ -22,15 +22,24 @@ Popup {
     property string editingId: ""
     readonly property bool formView: editingId !== ""
     property var creds: []
+    // One-shot callback(id) invoked after a *new* credential is saved, when the
+    // manager was opened to add one on another view's behalf (e.g. the "New
+    // credential…" row of a connection's picker). It lets the caller select the
+    // freshly created set and we close back to it, instead of dropping the user
+    // on the list to pick it again.
+    property var pickHandler: null
 
     function refresh() { creds = CredentialStore.list() }
-    function openManager() { editingId = ""; refresh(); open() }
+    function openManager() { pickHandler = null; editingId = ""; refresh(); open() }
 
     function startAdd() {
         editingId = "new"
         labelF.text = ""; userF.text = ""; passF.text = ""
         labelF.focusInput()
     }
+    // Add a credential and hand its id back to `handler` on save.
+    function startAddInto(handler) { pickHandler = handler; startAdd() }
+    function cancelForm() { pickHandler = null; editingId = "" }
     function startEdit(id) {
         const c = CredentialStore.get(id)
         if (!c.id) return
@@ -41,12 +50,19 @@ Popup {
     }
     function saveForm() {
         if (!userF.text.trim()) { userF.error = true; userF.focusInput(); return }
-        CredentialStore.save({
+        const wasNew = editingId === "new"
+        const id = CredentialStore.save({
             id: editingId === "new" ? "" : editingId,
             label: labelF.text, username: userF.text, domain: "", password: passF.text
         })
         refresh()
-        editingId = ""
+        if (wasNew && pickHandler) {
+            const h = pickHandler; pickHandler = null
+            h(id)
+            close()
+        } else {
+            editingId = ""
+        }
     }
 
     Overlay.modal: Rectangle { color: Theme.overlay; Behavior on opacity { NumberAnimation { duration: Theme.normal } } }
@@ -75,7 +91,7 @@ Popup {
                 iconName: "chevron"; iconSize: 15
                 rotation: 180
                 tip: qsTr("Back")
-                onClicked: root.editingId = ""
+                onClicked: root.cancelForm()
             }
             Column {
                 Layout.fillWidth: true
@@ -198,7 +214,7 @@ Popup {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
-                GhostButton { text: qsTr("Cancel"); onClicked: root.editingId = "" }
+                GhostButton { text: qsTr("Cancel"); onClicked: root.cancelForm() }
                 Item { Layout.fillWidth: true }
                 PrimaryButton { text: qsTr("Save"); iconName: "enter"; onClicked: root.saveForm() }
             }
