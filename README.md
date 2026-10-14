@@ -34,8 +34,9 @@ you work, and handles the slow, lossy links real infrastructure runs on.
   credentials.
 - **Folder sharing** — share a local folder into the session as a redirected
   drive; add or change it live without losing your place.
-- **Smoothness on real links** — UDP multitransport with FEC, H.264 / AVC444 and
-  progressive GFX codecs, and QoE pacing, all negotiated with graceful fallback.
+- **Smoothness on real links** — H.264 / AVC444 and progressive GFX codecs and
+  QoE pacing, all negotiated with graceful fallback. Optional per-connection UDP
+  multitransport with FEC for lossy, high-latency links.
 - **Session tabs & fullscreen**, dynamic resolution, auto-reconnect, clipboard,
   and **Send Ctrl+Alt+Del** (`Ctrl+Alt+End`).
 - **Light & dark**, following the system appearance.
@@ -67,7 +68,7 @@ Perch uses CMake with Qt 6, FreeRDP 3, and QtKeychain.
 
 - CMake 3.21+ and a C++20 compiler
 - Qt 6.9+ (`Gui`, `Quick`, `QuickControls2`)
-- FreeRDP 3 (`freerdp`, `freerdp-client`, `winpr`)
+- FreeRDP **3.32+** (`freerdp`, `freerdp-client`, `winpr`) — see [SECURITY.md](SECURITY.md)
 - [QtKeychain](https://github.com/frankosterfeld/qtkeychain)
 
 ### macOS
@@ -77,7 +78,7 @@ brew install qt freerdp
 # QtKeychain is small; build it against the installed Qt, or install via brew.
 cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
 cmake --build build
-open build/Relay.app
+open build/Perch.app
 ```
 
 To keep the macOS keychain "Always Allow" grant across rebuilds, sign the app

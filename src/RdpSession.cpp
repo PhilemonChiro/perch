@@ -17,8 +17,18 @@
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/scancode.h>
 #include <freerdp/settings.h>
+#include <freerdp/version.h>
 #include <winpr/synch.h>
 #include <winpr/user.h>
+
+// Security floor. FreeRDP < 3.32.0 is affected by a server-forced protocol
+// downgrade that can disclose the user's password, and older releases miss the
+// 3.26.0 RDPGFX / gdi_CacheToSurface RCE fixes (Perch enables GFX). Refuse to
+// build against a vulnerable FreeRDP rather than silently ship one.
+#if !defined(FREERDP_VERSION_MAJOR) || (FREERDP_VERSION_MAJOR < 3) \
+    || (FREERDP_VERSION_MAJOR == 3 && FREERDP_VERSION_MINOR < 32)
+#error "Perch requires FreeRDP >= 3.32.0. Upgrade FreeRDP (brew upgrade freerdp / apt / vcpkg) and rebuild."
+#endif
 
 #include <cstring>
 #include <string>
@@ -488,11 +498,15 @@ void RdpSession::run()
     // unsupported servers fall back (UDP -> TCP, AVC444 -> progressive -> RFX),
     // so they are safe defaults that mainly help lossy / high-latency links.
     //  - Multitransport: a lossy UDP channel with FEC avoids TCP head-of-line
-    //    blocking, so one lost packet costs a tile, not a freeze.
-    freerdp_settings_set_bool(settings, FreeRDP_SupportMultitransport, TRUE);
-    freerdp_settings_set_uint32(settings, FreeRDP_MultitransportFlags,
-                                TRANSPORT_TYPE_UDP_FECR | TRANSPORT_TYPE_UDP_FECL
-                                    | TRANSPORT_TYPE_UDP_PREFERRED);
+    //    blocking, so one lost packet costs a tile, not a freeze. Opt-in per
+    //    connection: the extra UDP transport is attack surface, so it stays off
+    //    unless the connection asks for it. TCP alone is the safe default.
+    if (m_useUdp) {
+        freerdp_settings_set_bool(settings, FreeRDP_SupportMultitransport, TRUE);
+        freerdp_settings_set_uint32(settings, FreeRDP_MultitransportFlags,
+                                    TRANSPORT_TYPE_UDP_FECR | TRANSPORT_TYPE_UDP_FECL
+                                        | TRANSPORT_TYPE_UDP_PREFERRED);
+    }
     //  - Modern GFX codecs: AVC444 keeps text crisp while video stays cheap;
     //    progressive refinement sharpens a changed region in instead of blanking
     //    it on slow links. The server picks whichever it supports.

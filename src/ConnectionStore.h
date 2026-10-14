@@ -68,6 +68,7 @@ private:
     };
     struct Host {
         QString id, name, host, username, domain, folderId, share, gateway, credentialId;
+        bool useUdp = false;
         int port = 3389;
         qint64 lastConnected = 0;
     };

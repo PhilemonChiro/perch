@@ -81,6 +81,10 @@ public:
     // RD Gateway to tunnel through ("host" or "host:port"); uses the connection's
     // own credentials. Set before the first connect.
     void setGateway(const QString& gateway) { m_gateway = gateway; }
+    // Opt in to the UDP multitransport channel (FEC, lower latency on lossy
+    // links) for this connection. Off by default: TCP-only is the safe default
+    // and UDP is extra attack surface. Set before the first connect.
+    void setUseUdp(bool on) { m_useUdp = on; }
 
     Q_INVOKABLE void signIn(const QString& username, const QString& password, const QString& domain,
                             bool remember);
@@ -150,6 +154,7 @@ private:
     // GUI-thread state.
     QString m_username, m_domain, m_password, m_sharedFolder, m_gateway, m_credentialId;
     bool m_remember = false;
+    bool m_useUdp = false;
     State m_state = Idle;
     QString m_statusText, m_errorText;
     int m_stage = 0;

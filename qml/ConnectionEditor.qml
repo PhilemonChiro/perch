@@ -30,6 +30,7 @@ Popup {
 
     function reset() {
         nameF.text = ""; hostF.text = ""; portF.text = "3389"; gatewayF.text = ""
+        udpSwitch.checked = false
         sharePath = ""
         credentialId = ""
         folderId = ""
@@ -45,6 +46,7 @@ Popup {
         nameF.text = h.name === h.host ? "" : h.name
         hostF.text = h.host; portF.text = String(h.port)
         gatewayF.text = h.gateway || ""
+        udpSwitch.checked = h.useUdp || false
         sharePath = h.share || ""
         credentialId = h.credentialId || ""
         folderId = h.folderId || ""
@@ -65,8 +67,8 @@ Popup {
             id: editId, name: nameF.text, host: hostF.text, port: parseInt(portF.text) || 3389,
             username: credentialId === "" ? (prev.username || "") : "",
             domain: credentialId === "" ? (prev.domain || "") : "",
-            share: sharePath, gateway: gatewayF.text, credentialId: credentialId,
-            folderId: folderId
+            share: sharePath, gateway: gatewayF.text, useUdp: udpSwitch.checked,
+            credentialId: credentialId, folderId: folderId
         })
         close()
         saved(nameF.text || hostF.text, connect, id)
@@ -187,6 +189,22 @@ Popup {
                     Text {
                         width: parent.width
                         text: qsTr("Tunnel through this gateway using the same credentials.")
+                        color: Theme.textFaint
+                        font.pixelSize: Theme.fontXs
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                Column {
+                    Layout.fillWidth: true
+                    spacing: 5
+                    Toggle {
+                        id: udpSwitch
+                        label: qsTr("Use UDP transport")
+                    }
+                    Text {
+                        width: parent.width
+                        text: qsTr("Faster on lossy or high-latency links, but opens an extra UDP channel. Off uses TCP only.")
                         color: Theme.textFaint
                         font.pixelSize: Theme.fontXs
                         wrapMode: Text.WordWrap
