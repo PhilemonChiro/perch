@@ -111,7 +111,7 @@ jobs:
           cp "$RUNNER_TEMP"/deps/bin/*.dll "$(dirname "$(command -v windeployqt)")/" 2>/dev/null || true
           windeployqt --qmldir qml --release dist/Perch.exe
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         continue-on-error: true
         with:
           name: perch-${{ matrix.name }}
