@@ -79,6 +79,14 @@ set_target_properties(relay PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
 )
 
+# App/dock icon (the Perch bird) for the macOS bundle.
+if(APPLE)
+    set(PERCH_ICNS ${CMAKE_CURRENT_SOURCE_DIR}/macos/Perch.icns)
+    set_source_files_properties(${PERCH_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+    target_sources(relay PRIVATE ${PERCH_ICNS})
+    set_target_properties(relay PROPERTIES MACOSX_BUNDLE_ICON_FILE "Perch")
+endif()
+
 # Sign the bundle with a stable identity so the macOS keychain "Always Allow"
 # grant survives rebuilds (ad-hoc signatures change every build and re-prompt).
 # Configure with -DRELAY_CODESIGN_IDENTITY="Apple Development: Your Name (TEAMID)".
