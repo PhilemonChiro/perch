@@ -27,7 +27,7 @@ Popup {
     property string sharePath: ""
 
     function reset() {
-        nameF.text = ""; hostF.text = ""; portF.text = "3389"; userF.text = ""; passF.text = ""
+        nameF.text = ""; hostF.text = ""; portF.text = "3389"; userF.text = ""; passF.text = ""; gatewayF.text = ""
         sharePath = ""
         hostF.error = false
         folderChoices = [{ id: "", name: qsTr("No folder"), depth: 0 }].concat(ConnectionStore.folders())
@@ -47,6 +47,7 @@ Popup {
         nameF.text = h.name === h.host ? "" : h.name
         hostF.text = h.host; portF.text = String(h.port)
         userF.text = h.domain ? (h.domain + "\\" + h.username) : h.username
+        gatewayF.text = h.gateway || ""
         sharePath = h.share || ""
         selectFolder(h.folderId)
         open()
@@ -61,7 +62,7 @@ Popup {
         if (!hostF.text.trim()) { hostF.error = true; shake.restart(); hostF.focusInput(); return }
         const id = ConnectionStore.saveHost({
             id: editId, name: nameF.text, host: hostF.text, port: parseInt(portF.text) || 3389,
-            username: userF.text, domain: "", share: sharePath,
+            username: userF.text, domain: "", share: sharePath, gateway: gatewayF.text,
             folderId: folderChoices[folderBox.currentIndex] ? folderChoices[folderBox.currentIndex].id : ""
         })
         const pass = passF.text
@@ -174,6 +175,26 @@ Popup {
                     password: true
                     placeholder: root.editing ? qsTr("Leave blank to keep the saved one") : qsTr("Optional — you’ll be asked when connecting")
                     onAccepted: root.save(false)
+                }
+
+                Column {
+                    Layout.fillWidth: true
+                    spacing: 5
+                    Field {
+                        id: gatewayF
+                        width: parent.width
+                        label: qsTr("RD Gateway")
+                        placeholder: qsTr("Optional — gateway.example.com[:443]")
+                        mono: true
+                        onAccepted: root.save(false)
+                    }
+                    Text {
+                        width: parent.width
+                        text: qsTr("Tunnel through this gateway using the same credentials.")
+                        color: Theme.textFaint
+                        font.pixelSize: Theme.fontXs
+                        wrapMode: Text.WordWrap
+                    }
                 }
 
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 4 }

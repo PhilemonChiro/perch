@@ -507,6 +507,26 @@ void RdpSession::run()
     freerdp_settings_set_uint32(settings, FreeRDP_GlyphSupportLevel, GLYPH_SUPPORT_FULL);
     freerdp_settings_set_uint32(settings, FreeRDP_OffscreenSupportLevel, 1u);
 
+    // RD Gateway: tunnel through a gateway using the connection's own credentials.
+    if (!m_gateway.isEmpty()) {
+        QString gwHost = m_gateway.trimmed();
+        int gwPort = 443;
+        const int colon = gwHost.lastIndexOf(':');
+        if (colon > 0 && !gwHost.mid(colon + 1).contains(']')) {
+            bool ok = false;
+            const int p = gwHost.mid(colon + 1).toInt(&ok);
+            if (ok && p > 0 && p <= 65535) {
+                gwPort = p;
+                gwHost = gwHost.left(colon);
+            }
+        }
+        freerdp_settings_set_bool(settings, FreeRDP_GatewayEnabled, TRUE);
+        freerdp_settings_set_string(settings, FreeRDP_GatewayHostname, gwHost.toUtf8().constData());
+        freerdp_settings_set_uint32(settings, FreeRDP_GatewayPort, UINT32(gwPort));
+        freerdp_settings_set_bool(settings, FreeRDP_GatewayUseSameCredentials, TRUE);
+        freerdp_settings_set_bool(settings, FreeRDP_GatewayHttpUseWebsockets, TRUE);
+    }
+
     {
         QMutexLocker lock(&m_contextMutex);
         m_context = ctx;

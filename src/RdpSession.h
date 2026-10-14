@@ -75,6 +75,9 @@ public:
     // Change the shared folder on a live session and reconnect to apply it (RDP
     // negotiates drive redirection at connect time). Credentials are reused.
     Q_INVOKABLE void shareFolder(const QString& path);
+    // RD Gateway to tunnel through ("host" or "host:port"); uses the connection's
+    // own credentials. Set before the first connect.
+    void setGateway(const QString& gateway) { m_gateway = gateway; }
 
     Q_INVOKABLE void signIn(const QString& username, const QString& password, const QString& domain,
                             bool remember);
@@ -138,7 +141,7 @@ private:
     const int m_port;
 
     // GUI-thread state.
-    QString m_username, m_domain, m_password, m_sharedFolder;
+    QString m_username, m_domain, m_password, m_sharedFolder, m_gateway;
     bool m_remember = false;
     State m_state = Idle;
     QString m_statusText, m_errorText;

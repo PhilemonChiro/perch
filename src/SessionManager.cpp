@@ -97,6 +97,7 @@ int SessionManager::openHost(const QString& hostId)
                              h.value("port").toInt(), h.value("username").toString(),
                              h.value("domain").toString(), this);
     s->setSharedFolder(h.value("share").toString());
+    s->setGateway(h.value("gateway").toString());
     const int row = add(s);
     QPointer<RdpSession> guard(s);
     Credentials::read(hostId, [guard](bool found, const QString& password) {
@@ -125,6 +126,7 @@ int SessionManager::openHostWithPassword(const QString& hostId, const QString& p
                              h.value("port").toInt(), h.value("username").toString(),
                              h.value("domain").toString(), this);
     s->setSharedFolder(h.value("share").toString());
+    s->setGateway(h.value("gateway").toString());
     const int row = add(s);
     s->startWithPassword(password);
     return row;
