@@ -25,7 +25,6 @@ Popup {
     property string editId: ""
     property string folderId: ""
     readonly property bool editing: editId !== ""
-    property var folderChoices: []
     property string sharePath: ""
     property string credentialId: ""
     property var credChoices: []
@@ -49,17 +48,12 @@ Popup {
         nameF.text = ""; hostF.text = ""; portF.text = "3389"; gatewayF.text = ""
         sharePath = ""
         credentialId = ""
+        folderId = ""
         hostF.error = false
-        folderChoices = [{ id: "", name: qsTr("No folder"), depth: 0 }].concat(ConnectionStore.folders())
         refreshCreds()
     }
-    function selectFolder(id) {
-        for (let i = 0; i < folderChoices.length; ++i)
-            if (folderChoices[i].id === id) { folderBox.currentIndex = i; return }
-        folderBox.currentIndex = 0
-    }
     function openNew(folder) {
-        editId = ""; reset(); selectFolder(folder || ""); open()
+        editId = ""; reset(); folderId = folder || ""; open()
     }
     function openEdit(id) {
         const h = ConnectionStore.host(id)
@@ -70,12 +64,12 @@ Popup {
         gatewayF.text = h.gateway || ""
         sharePath = h.share || ""
         credentialId = h.credentialId || ""
+        folderId = h.folderId || ""
         syncCred()
-        selectFolder(h.folderId)
         open()
     }
     function openFromSession(s) {
-        editId = ""; reset(); selectFolder("")
+        editId = ""; reset()
         hostF.text = s.host; portF.text = String(s.port)
         open()
     }
@@ -90,7 +84,7 @@ Popup {
             username: credentialId === "" ? (prev.username || "") : "",
             domain: credentialId === "" ? (prev.domain || "") : "",
             share: sharePath, gateway: gatewayF.text, credentialId: credentialId,
-            folderId: folderChoices[folderBox.currentIndex] ? folderChoices[folderBox.currentIndex].id : ""
+            folderId: folderId
         })
         close()
         saved(nameF.text || hostF.text, connect, id)
@@ -293,73 +287,6 @@ Popup {
                     }
                 }
 
-                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 4 }
-
-                Column {
-                    Layout.fillWidth: true
-                    spacing: 6
-                    Text { text: qsTr("Folder"); color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.Medium }
-                    ComboBox {
-                        id: folderBox
-                        width: parent.width
-                        height: 38
-                        model: root.folderChoices
-                        textRole: "name"
-                        delegate: ItemDelegate {
-                            id: fd
-                            required property var modelData
-                            required property int index
-                            width: folderBox.width - 12
-                            x: 6
-                            height: 32
-                            highlighted: folderBox.highlightedIndex === index
-                            contentItem: Text {
-                                leftPadding: 4 + fd.modelData.depth * 14
-                                text: fd.modelData.name
-                                color: Theme.text
-                                font.pixelSize: Theme.fontMd
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            background: Rectangle { radius: Theme.radiusSm; color: fd.highlighted ? Theme.surface3 : "transparent" }
-                        }
-                        contentItem: Text {
-                            leftPadding: 12
-                            text: folderBox.displayText
-                            color: Theme.text
-                            font.pixelSize: Theme.fontMd
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        indicator: Icon {
-                            x: folderBox.width - width - 12
-                            y: (folderBox.height - height) / 2
-                            name: "chevron"; size: 12; color: Theme.textFaint
-                            rotation: folderBox.popup.visible ? -90 : 90
-                            Behavior on rotation { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutBack } }
-                        }
-                        background: Rectangle {
-                            radius: Theme.radius
-                            color: Theme.surface2
-                            border.color: folderBox.popup.visible || folderBox.activeFocus ? Theme.accent : folderBox.hovered ? Theme.borderStrong : Theme.border
-                            Behavior on border.color { ColorAnimation { duration: Theme.fast } }
-                        }
-                        popup: Popup {
-                            y: folderBox.height + 4
-                            width: folderBox.width
-                            implicitHeight: Math.min(contentItem.implicitHeight + 12, 260)
-                            padding: 6
-                            enter: Transition { ParallelAnimation {
-                                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.fast }
-                                NumberAnimation { property: "y"; from: folderBox.height - 4; to: folderBox.height + 4; duration: Theme.normal; easing.type: Theme.easing } } }
-                            contentItem: ListView {
-                                clip: true
-                                implicitHeight: contentHeight
-                                model: folderBox.popup.visible ? folderBox.delegateModel : null
-                                currentIndex: folderBox.highlightedIndex
-                            }
-                            background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
-                        }
-                    }
-                }
 
             }
         }
