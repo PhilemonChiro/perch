@@ -2,3 +2,8 @@ build/
 .DS_Store
 *.user
 .claude-handoff.md
+*.p12
+*.pem
+*.key
+*.cer
+*.mobileprovision

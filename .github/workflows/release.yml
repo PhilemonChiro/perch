@@ -103,6 +103,7 @@ jobs:
           # Signature Invalid" on launch). Run it first, then (re)sign the
           # finished bundle so every page hash matches the shipped content.
           macdeployqt build/Perch.app -qmldir=qml
+          bash .github/scripts/bundle-openssl-legacy.sh build/Perch.app
 
           if [ -n "${MACOS_SIGN_IDENTITY:-}" ] && [ -n "${MACOS_CERT_P12:-}" ]; then
             echo "Signing with Developer ID + notarizing."

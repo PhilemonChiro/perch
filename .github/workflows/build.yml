@@ -90,6 +90,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           macdeployqt build/Perch.app -qmldir=qml
+          bash .github/scripts/bundle-openssl-legacy.sh build/Perch.app
           # Re-sign ad-hoc after macdeployqt's dylib-path rewrites, or the app
           # SIGKILLs on launch ("Code Signature Invalid") on other Macs.
           codesign --remove-signature build/Perch.app 2>/dev/null || true
