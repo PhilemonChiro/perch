@@ -26,6 +26,8 @@ Popup {
     readonly property bool editing: editId !== ""
     property string sharePath: ""
     property string credentialId: ""
+    property string connType: "rdp"   // "rdp" | "mssql"
+    readonly property bool isSql: connType === "mssql"
     signal manageCredentials(bool addNew)
 
     function reset() {
@@ -34,17 +36,33 @@ Popup {
         sharePath = ""
         credentialId = ""
         folderId = ""
+        connType = "rdp"
+        userF.text = ""; dbF.text = ""
         hostF.error = false
+    }
+    // Switches connection type, moving the port to the new default if it's still
+    // the old default.
+    function setType(t) {
+        if (connType === t) return
+        if (portF.text === (isSql ? "1433" : "3389") || portF.text === "")
+            portF.text = (t === "mssql") ? "1433" : "3389"
+        connType = t
     }
     function openNew(folder) {
         editId = ""; reset(); folderId = folder || ""; open()
+    }
+    function openNewDatabase(folder) {
+        editId = ""; reset(); setType("mssql"); folderId = folder || ""; open()
     }
     function openEdit(id) {
         const h = ConnectionStore.host(id)
         if (!h.id) return
         editId = id; reset()
+        connType = (h.type === "mssql") ? "mssql" : "rdp"
         nameF.text = h.name === h.host ? "" : h.name
         hostF.text = h.host; portF.text = String(h.port)
+        userF.text = h.username || ""
+        dbF.text = h.database || ""
         gatewayF.text = h.gateway || ""
         udpSwitch.checked = h.useUdp || false
         sharePath = h.share || ""
@@ -63,12 +81,16 @@ Popup {
         // connect prompt. Any legacy inline username/password on the connection is
         // preserved when no set is chosen.
         const prev = editId ? ConnectionStore.host(editId) : {}
+        const defPort = root.isSql ? 1433 : 3389
         const id = ConnectionStore.saveHost({
-            id: editId, name: nameF.text, host: hostF.text, port: parseInt(portF.text) || 3389,
-            username: credentialId === "" ? (prev.username || "") : "",
+            id: editId, name: nameF.text, host: hostF.text, port: parseInt(portF.text) || defPort,
+            type: root.connType,
+            database: root.isSql ? dbF.text.trim() : "",
+            username: root.isSql ? userF.text.trim()
+                    : (credentialId === "" ? (prev.username || "") : ""),
             domain: credentialId === "" ? (prev.domain || "") : "",
             share: sharePath, gateway: gatewayF.text, useUdp: udpSwitch.checked,
-            credentialId: credentialId, folderId: folderId
+            credentialId: root.isSql ? "" : credentialId, folderId: folderId
         })
         close()
         saved(nameF.text || hostF.text, connect, id)
@@ -149,21 +171,76 @@ Popup {
                 y: 12
                 spacing: 18
 
-                Field { id: hostF; Layout.fillWidth: true; label: qsTr("Host"); placeholder: "server.example.com"; mono: true; iconName: "monitor"
+                // Connection type — Remote Desktop or SQL Server.
+                Column {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Text { text: qsTr("Type"); color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.Medium }
+                    Row {
+                        spacing: 8
+                        Repeater {
+                            model: [
+                                { t: "rdp", label: qsTr("Remote Desktop"), icon: "monitor", col: Theme.rdpTag },
+                                { t: "mssql", label: qsTr("SQL Server"), icon: "database", col: Theme.sqlTag }
+                            ]
+                            delegate: AbstractButton {
+                                required property var modelData
+                                readonly property bool sel: root.connType === modelData.t
+                                implicitHeight: 38
+                                implicitWidth: 168
+                                hoverEnabled: true
+                                focusPolicy: Qt.NoFocus
+                                onClicked: root.setType(modelData.t)
+                                background: Rectangle {
+                                    radius: Theme.radius
+                                    color: sel ? Qt.rgba(modelData.col.r, modelData.col.g, modelData.col.b, 0.12)
+                                               : (hovered ? Theme.surface2 : "transparent")
+                                    border.color: sel ? modelData.col : Theme.border
+                                    border.width: sel ? 1.5 : 1
+                                    Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                }
+                                contentItem: RowLayout {
+                                    spacing: 9
+                                    Icon { Layout.leftMargin: 12; name: modelData.icon; size: 16; color: sel ? modelData.col : Theme.textDim }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.label
+                                        color: sel ? Theme.text : Theme.textDim
+                                        font.pixelSize: Theme.fontMd
+                                        font.weight: sel ? Font.Medium : Font.Normal
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Field { id: hostF; Layout.fillWidth: true; label: qsTr("Host"); placeholder: "server.example.com"; mono: true
+                    iconName: root.isSql ? "database" : "monitor"
                     input.onTextChanged: error = false; onAccepted: root.save(false) }
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 12
                     Field { id: nameF; Layout.fillWidth: true; label: qsTr("Display name"); placeholder: qsTr("Optional"); onAccepted: root.save(false) }
-                    Field { id: portF; Layout.preferredWidth: 96; label: qsTr("Port"); placeholder: "3389"; mono: true
+                    Field { id: portF; Layout.preferredWidth: 96; label: qsTr("Port"); placeholder: root.isSql ? "1433" : "3389"; mono: true
                         input.validator: IntValidator { bottom: 1; top: 65535 }
                         onAccepted: root.save(false) }
                 }
 
-                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 4 }
+                // SQL-only: login user and default database.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+                    visible: root.isSql
+                    Field { id: userF; Layout.fillWidth: true; label: qsTr("Username"); placeholder: qsTr("e.g. sa"); mono: true; onAccepted: root.save(false) }
+                    Field { id: dbF; Layout.fillWidth: true; label: qsTr("Database"); placeholder: qsTr("Optional — pick after connect"); mono: true; onAccepted: root.save(false) }
+                }
+
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; Layout.topMargin: 4; visible: !root.isSql }
                 Column {
                     Layout.fillWidth: true
                     spacing: 6
+                    visible: !root.isSql
                     Text { text: qsTr("Credentials"); color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.Medium }
 
                     // Pick a saved credential set, or enter one inline.
@@ -178,6 +255,7 @@ Popup {
                 Column {
                     Layout.fillWidth: true
                     spacing: 5
+                    visible: !root.isSql
                     Field {
                         id: gatewayF
                         width: parent.width
@@ -198,6 +276,7 @@ Popup {
                 Column {
                     Layout.fillWidth: true
                     spacing: 5
+                    visible: !root.isSql
                     Toggle {
                         id: udpSwitch
                         label: qsTr("Use UDP transport")
@@ -211,7 +290,15 @@ Popup {
                     }
                 }
 
-
+                // SQL note: the password is entered when you connect, not stored here.
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.isSql
+                    text: qsTr("You'll enter the password when you connect. It's kept only in memory for that session.")
+                    color: Theme.textFaint
+                    font.pixelSize: Theme.fontXs
+                    wrapMode: Text.WordWrap
+                }
             }
         }
 

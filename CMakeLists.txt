@@ -47,7 +47,6 @@ qt_add_qml_module(relay
         src/RdpView.h src/RdpView.cpp
         src/SqlResultModel.h
         src/SqlSession.h src/SqlSession.cpp
-        src/DbManager.h src/DbManager.cpp
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
@@ -59,7 +58,7 @@ qt_add_qml_module(relay
         qml/ConnectionEditor.qml
         qml/CredentialManager.qml
         qml/CredentialPicker.qml
-        qml/DbConsole.qml
+        qml/SqlPage.qml
         qml/components/Icon.qml
         qml/components/IconButton.qml
         qml/components/PrimaryButton.qml

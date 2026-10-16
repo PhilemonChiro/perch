@@ -338,6 +338,9 @@ Rectangle {
         required property int childCount
         required property string host
         required property string username
+        required property string connType
+
+        readonly property bool isSql: connType === "mssql"
 
         signal activated()
         signal edit()
@@ -378,7 +381,7 @@ Rectangle {
                 width: 3
                 height: row.session ? 16 : 0
                 radius: 2
-                color: Theme.stateColor(row.session ? row.session.state : 0)
+                color: Theme.phaseColor(row.session ? row.session.phase : 0)
                 Behavior on height { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutBack } }
                 Behavior on color { ColorAnimation { duration: Theme.slow } }
             }
@@ -396,9 +399,12 @@ Rectangle {
                 Behavior on rotation { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutBack } }
             }
             Icon {
-                name: row.isFolder ? "folder" : "monitor"
+                name: row.isFolder ? "folder" : (row.isSql ? "database" : "monitor")
                 size: 15
-                color: row.isFolder ? Theme.textDim : (row.hovered ? Theme.accent : Theme.textDim)
+                // Colour tag: SQL databases in violet, RDP desktops in blue.
+                color: row.isFolder ? Theme.textDim
+                     : row.isSql ? Theme.sqlTag
+                     : (row.hovered ? Theme.rdpTag : Theme.textDim)
                 Behavior on color { ColorAnimation { duration: Theme.fast } }
             }
             Text {
@@ -430,10 +436,12 @@ Rectangle {
                 font.pixelSize: Theme.fontXs
                 Layout.rightMargin: 16
             }
-            StatusDot {
+            Rectangle {
                 visible: !row.isFolder && row.session !== null && !row.hovered
-                state: row.session ? row.session.state : 0
                 Layout.rightMargin: 18
+                implicitWidth: 7; implicitHeight: 7; radius: 3.5
+                color: Theme.phaseColor(row.session ? row.session.phase : 0)
+                Behavior on color { ColorAnimation { duration: Theme.slow } }
             }
             Row {
                 visible: row.hovered && !row.renaming

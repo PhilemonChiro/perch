@@ -29,12 +29,7 @@ ApplicationWindow {
     // A quick-connect string beginning mssql:// (or sql://) opens a SQL Server
     // console window instead of an RDP session.
     function isDbTarget(text) { return /^\s*(mssql|sql):\/\//i.test(text) }
-    function openDb(text) {
-        const s = DbManager.open(text)
-        if (!s) return false
-        dbConsoleComp.createObject(win, { session: s }).show()
-        return true
-    }
+    function openDb(text) { return SessionManager.quickConnectDatabase(text) >= 0 }
     // Routes a quick-connect string to either the DB console or an RDP session.
     function quickConnect(text) {
         if (isDbTarget(text)) {
@@ -159,23 +154,47 @@ ApplicationWindow {
 
                 Repeater {
                     model: SessionManager
-                    delegate: SessionPage {
+                    delegate: Item {
+                        id: tabHost
                         required property int index
                         required property var session
+                        required property string kind
                         anchors.fill: parent
-                        sessionObj: session
-                        active: index === win.current
-                        fullscreen: win.fullscreen
-                        opacity: active ? 1 : 0
+                        readonly property bool current: index === win.current
+                        opacity: current ? 1 : 0
                         visible: opacity > 0
                         Behavior on opacity { NumberAnimation { duration: Theme.normal } }
-                        onCloseRequested: win.closeTab(index)
-                        onFullscreenRequested: win.toggleFullscreen()
-                        onSaveRequested: editor.openFromSession(session)
-                        onToast: (m, k) => win.toast(m, k)
-                        onManageCredentials: (addNew) => {
-                            credManager.openManager()
-                            if (addNew) credManager.startAddInto((id) => SessionManager.reconnectWithCredential(session, id))
+
+                        Loader {
+                            anchors.fill: parent
+                            sourceComponent: tabHost.kind === "sql" ? sqlComp : rdpComp
+                        }
+                        Component {
+                            id: rdpComp
+                            SessionPage {
+                                anchors.fill: parent
+                                sessionObj: tabHost.session
+                                active: tabHost.current
+                                fullscreen: win.fullscreen
+                                onCloseRequested: win.closeTab(tabHost.index)
+                                onFullscreenRequested: win.toggleFullscreen()
+                                onSaveRequested: editor.openFromSession(tabHost.session)
+                                onToast: (m, k) => win.toast(m, k)
+                                onManageCredentials: (addNew) => {
+                                    credManager.openManager()
+                                    if (addNew) credManager.startAddInto((id) => SessionManager.reconnectWithCredential(tabHost.session, id))
+                                }
+                            }
+                        }
+                        Component {
+                            id: sqlComp
+                            SqlPage {
+                                anchors.fill: parent
+                                sessionObj: tabHost.session
+                                active: tabHost.current
+                                onCloseRequested: win.closeTab(tabHost.index)
+                                onToast: (m, k) => win.toast(m, k)
+                            }
                         }
                     }
                 }
@@ -210,9 +229,6 @@ ApplicationWindow {
     }
 
     CredentialManager { id: credManager }
-
-    // One SQL console window is spawned per database connection.
-    Component { id: dbConsoleComp; DbConsole {} }
 
     Toast {
         id: toaster

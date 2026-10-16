@@ -82,4 +82,21 @@ QtObject {
         default: return textFaint
         }
     }
+
+    // Colour tag per connection kind: RDP desktops vs SQL databases.
+    readonly property color rdpTag: accent               // blue
+    readonly property color sqlTag: dark ? "#C99BFF" : "#8A4FD6"  // violet
+    function kindColor(kind) { return kind === "sql" ? sqlTag : rdpTag }
+
+    // Shared lifecycle phase colour (0 idle,1 connecting,2 live,3 busy,4 ended,5 failed).
+    function phaseColor(phase) {
+        switch (phase) {
+        case 1: return warning   // connecting
+        case 2: return success   // live
+        case 3: return accent    // busy (running a query)
+        case 5: return danger    // failed
+        case 4:                  // ended / paused
+        default: return textFaint
+        }
+    }
 }

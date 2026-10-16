@@ -12,7 +12,8 @@ Rectangle {
     property int current: -1
     property bool sidebarOpen: true
     readonly property var activeSession: (current >= 0 && current < SessionManager.count) ? SessionManager.at(current) : null
-    readonly property bool sessionLive: activeSession && activeSession.state === RdpSession.Connected
+    readonly property bool sessionLive: activeSession && activeSession.phase === 2
+    readonly property bool activeIsRdp: activeSession && activeSession.kind === "rdp"
     signal select(int index)
     signal closeTab(int index)
     signal showSidebar()
@@ -137,6 +138,7 @@ Rectangle {
                 required property var session
                 required property string title
                 required property int state
+                required property string kind
                 readonly property bool active: index === root.current
 
                 width: tabs.tabWidth
@@ -158,7 +160,26 @@ Rectangle {
 
                 contentItem: RowLayout {
                     spacing: 8
-                    StatusDot { Layout.leftMargin: 12; state: tab.state }
+                    // Kind icon carries the colour tag (blue = RDP, violet = SQL);
+                    // a corner dot carries the live phase.
+                    Item {
+                        Layout.leftMargin: 12
+                        implicitWidth: 16; implicitHeight: 16
+                        Icon {
+                            anchors.centerIn: parent
+                            name: tab.kind === "sql" ? "database" : "monitor"
+                            size: 14
+                            color: Theme.kindColor(tab.kind)
+                            opacity: tab.active ? 1 : 0.75
+                        }
+                        Rectangle {
+                            visible: tab.state !== 0
+                            width: 6; height: 6; radius: 3
+                            color: Theme.phaseColor(tab.state)
+                            border.width: 1.5; border.color: Theme.bg
+                            anchors { right: parent.right; bottom: parent.bottom; rightMargin: -1; bottomMargin: -1 }
+                        }
+                    }
                     Text {
                         Layout.fillWidth: true
                         text: tab.title
@@ -183,10 +204,11 @@ Rectangle {
             }
         }
 
-        // Contextual controls for the active session.
+        // Contextual controls for the active RDP session (folder share, fullscreen,
+        // disconnect). SQL tabs carry their own controls inside the page.
         Row {
             spacing: 2
-            visible: root.activeSession !== null
+            visible: root.activeIsRdp
             Rectangle { width: 1; height: 18; color: Theme.border; anchors.verticalCenter: parent.verticalCenter }
             IconButton {
                 id: tsShare
@@ -216,7 +238,7 @@ Rectangle {
             }
         }
 
-        Rectangle { width: 1; height: 18; color: Theme.border; visible: root.activeSession !== null }
+        Rectangle { width: 1; height: 18; color: Theme.border; visible: root.activeIsRdp }
 
         IconButton {
             iconName: "plus"

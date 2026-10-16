@@ -103,6 +103,8 @@ QHash<int, QByteArray> ConnectionStore::roleNames() const
         {ParentRole, "parentId"},
         {ChildCountRole, "childCount"},
         {LastConnectedRole, "lastConnected"},
+        {ConnTypeRole, "connType"},
+        {DatabaseRole, "database"},
     };
 }
 
@@ -145,6 +147,8 @@ QVariant ConnectionStore::data(const QModelIndex& index, int role) const
     case DomainRole: return h.domain;
     case ParentRole: return h.folderId;
     case LastConnectedRole: return h.lastConnected;
+    case ConnTypeRole: return h.type;
+    case DatabaseRole: return h.database;
     default: return {};
     }
 }
@@ -239,7 +243,9 @@ void ConnectionStore::load()
         h.id = o.value("id").toString();
         h.name = o.value("name").toString();
         h.host = o.value("host").toString();
-        h.port = o.value("port").toInt(3389);
+        h.type = o.value("type").toString(QStringLiteral("rdp"));
+        h.database = o.value("database").toString();
+        h.port = o.value("port").toInt(h.type == QLatin1String("mssql") ? 1433 : 3389);
         h.username = o.value("username").toString();
         h.domain = o.value("domain").toString();
         h.folderId = o.value("folderId").toString();
@@ -260,6 +266,7 @@ void ConnectionStore::save() const
                                    {"expanded", f.expanded}});
     for (const Host& h : m_hosts)
         hosts.append(QJsonObject{{"id", h.id}, {"name", h.name}, {"host", h.host},
+                                 {"type", h.type}, {"database", h.database},
                                  {"port", h.port}, {"username", h.username},
                                  {"domain", h.domain}, {"folderId", h.folderId},
                                  {"share", h.share}, {"gateway", h.gateway},
@@ -309,6 +316,8 @@ QVariantMap ConnectionStore::hostMap(const Host& h) const
     return {{"id", h.id},
             {"name", h.name.isEmpty() ? h.host : h.name},
             {"host", h.host},
+            {"type", h.type},
+            {"database", h.database},
             {"port", h.port},
             {"username", h.username},
             {"domain", h.domain},
@@ -355,9 +364,13 @@ QString ConnectionStore::saveHost(const QVariantMap& m)
     Host& h = m_hosts[i];
     h.name = m.value("name").toString().trimmed();
     h.host = m.value("host").toString().trimmed();
-    h.port = m.value("port", 3389).toInt();
+    h.type = m.value("type").toString() == QLatin1String("mssql") ? QStringLiteral("mssql")
+                                                                   : QStringLiteral("rdp");
+    h.database = m.value("database").toString().trimmed();
+    const int defPort = h.type == QLatin1String("mssql") ? 1433 : 3389;
+    h.port = m.value("port", defPort).toInt();
     if (h.port <= 0 || h.port > 65535)
-        h.port = 3389;
+        h.port = defPort;
     h.username = m.value("username").toString().trimmed();
     h.domain = m.value("domain").toString().trimmed();
     h.folderId = m.value("folderId").toString();

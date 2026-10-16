@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
     if (const QString target = qEnvironmentVariable("RELAY_CONNECT"); !target.isEmpty()) {
         QTimer::singleShot(300, [target] {
             auto* mgr = SessionManager::create(nullptr, nullptr);
-            RdpSession* s = mgr->at(mgr->quickConnect(target));
+            RdpSession* s = qobject_cast<RdpSession*>(mgr->at(mgr->quickConnect(target)));
             if (!s)
                 return;
             if (const int trust = qEnvironmentVariableIntValue("RELAY_TRUST"))

@@ -27,6 +27,8 @@ public:
         ParentRole,
         ChildCountRole,
         LastConnectedRole,
+        ConnTypeRole,  // "rdp" | "mssql"
+        DatabaseRole,
     };
 
     static ConnectionStore* instance();
@@ -68,6 +70,8 @@ private:
     };
     struct Host {
         QString id, name, host, username, domain, folderId, share, gateway, credentialId;
+        QString type = QStringLiteral("rdp"); // "rdp" | "mssql"
+        QString database;                     // default database for mssql
         bool useUdp = false;
         int port = 3389;
         qint64 lastConnected = 0;

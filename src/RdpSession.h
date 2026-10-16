@@ -28,6 +28,8 @@ class RdpSession : public QObject
     QML_UNCREATABLE("Sessions are created by SessionManager")
 
     Q_PROPERTY(State state READ state NOTIFY stateChanged)
+    Q_PROPERTY(QString kind READ kind CONSTANT)
+    Q_PROPERTY(int phase READ phase NOTIFY stateChanged)
     Q_PROPERTY(QString title READ title CONSTANT)
     Q_PROPERTY(QString host READ host CONSTANT)
     Q_PROPERTY(int port READ port CONSTANT)
@@ -53,6 +55,22 @@ public:
     ~RdpSession() override;
 
     State state() const { return m_state; }
+    QString kind() const { return QStringLiteral("rdp"); }
+    // Kind-agnostic lifecycle phase shared with SqlSession so the tab strip and
+    // sidebar colour both connection kinds from one scheme:
+    // 0 idle · 1 connecting · 2 live · 3 busy · 4 ended · 5 failed.
+    int phase() const
+    {
+        switch (m_state) {
+        case Connecting:
+        case NeedsCredentials:
+        case VerifyingCertificate: return 1;
+        case Connected: return 2;
+        case Disconnected: return 4;
+        case Failed: return 5;
+        default: return 0;
+        }
+    }
     QString title() const { return m_title; }
     QString host() const { return m_host; }
     int port() const { return m_port; }
