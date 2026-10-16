@@ -6,6 +6,10 @@ name: spike-mssql
 # UI work. Not wired into PR/release builds.
 on:
   workflow_dispatch:
+  # Temporary: lets the spike run on its own branch (workflow_dispatch only
+  # registers from the default branch). Remove before merging.
+  push:
+    branches: [db-connector-spike]
 
 jobs:
   probe:
