@@ -147,57 +147,112 @@ Item {
                 spacing: 10
 
                 Icon { name: "database"; size: 15; color: Theme.sqlTag }
-                // Database context switcher.
-                ComboBox {
-                    id: dbPicker
-                    Layout.preferredWidth: 220
-                    model: sessionObj ? sessionObj.databases : []
+                // Database context switcher with search.
+                Item {
+                    id: dbSwitch
+                    Layout.preferredWidth: 240
+                    implicitHeight: 32
                     enabled: page.live
-                    currentIndex: sessionObj ? sessionObj.databases.indexOf(sessionObj.currentDatabase) : -1
-                    onActivated: if (sessionObj) sessionObj.useDatabase(currentValue)
 
-                    contentItem: Text {
-                        leftPadding: 12; rightPadding: 28
-                        text: sessionObj ? (sessionObj.currentDatabase || qsTr("(select database)")) : ""
-                        color: Theme.text; font.pixelSize: Theme.fontMd
-                        verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
-                    }
-                    background: Rectangle {
-                        implicitHeight: 32; radius: Theme.radius
-                        color: dbPicker.hovered ? Theme.surface2 : Theme.surface
-                        border.color: dbPicker.hovered ? Theme.borderStrong : Theme.border
-                    }
-                    indicator: Icon {
-                        x: dbPicker.width - width - 10; y: (dbPicker.height - height) / 2
-                        name: "chevron"; size: 12; color: Theme.textFaint; rotation: 90
-                    }
-                    popup: Popup {
-                        y: dbPicker.height + 4; width: dbPicker.width
-                        implicitHeight: Math.min(contentItem.implicitHeight + 12, 320)
-                        padding: 6
-                        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
-                        contentItem: ListView {
-                            clip: true
-                            implicitHeight: contentHeight
-                            model: dbPicker.popup.visible ? dbPicker.delegateModel : null
-                            ScrollBar.vertical: ScrollBar {}
-                        }
-                    }
-                    delegate: ItemDelegate {
-                        required property int index
-                        required property string modelData
-                        width: dbPicker.width - 12
-                        height: 30
-                        contentItem: Text {
-                            text: modelData; color: Theme.text; font.pixelSize: Theme.fontSm
-                            verticalAlignment: Text.AlignVCenter; leftPadding: 6; elide: Text.ElideRight
-                        }
+                    AbstractButton {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        focusPolicy: Qt.NoFocus
+                        opacity: dbSwitch.enabled ? 1 : 0.5
+                        onClicked: { dbPop.open(); dbSearch.forceActiveFocus() }
                         background: Rectangle {
-                            radius: Theme.radiusSm
-                            color: highlighted ? Theme.surface3 : "transparent"
+                            radius: Theme.radius
+                            color: parent.hovered ? Theme.surface2 : Theme.surface
+                            border.color: dbPop.visible ? Theme.accent : (parent.hovered ? Theme.borderStrong : Theme.border)
                         }
-                        highlighted: dbPicker.highlightedIndex === index
-                        onClicked: { dbPicker.currentIndex = index; sessionObj.useDatabase(modelData); dbPicker.popup.close() }
+                        contentItem: RowLayout {
+                            spacing: 6
+                            Icon { Layout.leftMargin: 10; name: "database"; size: 13; color: Theme.sqlTag }
+                            Text {
+                                Layout.fillWidth: true
+                                text: sessionObj ? (sessionObj.currentDatabase || qsTr("(select database)")) : ""
+                                color: Theme.text; font.pixelSize: Theme.fontMd
+                                verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                            }
+                            Icon { Layout.rightMargin: 10; name: "chevron"; size: 11; color: Theme.textFaint; rotation: 90 }
+                        }
+                    }
+
+                    Popup {
+                        id: dbPop
+                        y: dbSwitch.height + 4
+                        width: 280
+                        implicitHeight: Math.min(dbCol.implicitHeight + 12, 360)
+                        padding: 6
+                        onClosed: dbSearch.clear()
+                        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+
+                        readonly property var filtered: {
+                            const all = sessionObj ? sessionObj.databases : []
+                            const q = dbSearch.text.trim().toLowerCase()
+                            return q === "" ? all : all.filter(d => d.toLowerCase().indexOf(q) !== -1)
+                        }
+
+                        contentItem: ColumnLayout {
+                            id: dbCol
+                            spacing: 6
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 30
+                                radius: Theme.radius
+                                color: Theme.surface
+                                border.color: dbSearch.activeFocus ? Theme.accent : Theme.border
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 9; anchors.rightMargin: 8
+                                    spacing: 6
+                                    Icon { name: "search"; size: 13; color: Theme.textFaint }
+                                    TextField {
+                                        id: dbSearch
+                                        Layout.fillWidth: true
+                                        padding: 0; background: null
+                                        color: Theme.text; font.pixelSize: Theme.fontSm
+                                        placeholderText: qsTr("Search databases")
+                                        placeholderTextColor: Theme.textFaint
+                                        onAccepted: if (dbPop.filtered.length > 0) { sessionObj.useDatabase(dbPop.filtered[0]); dbPop.close() }
+                                    }
+                                }
+                            }
+                            ListView {
+                                id: dbList
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.min(contentHeight, 280)
+                                clip: true
+                                model: dbPop.filtered
+                                boundsBehavior: Flickable.StopAtBounds
+                                ScrollBar.vertical: ScrollBar {}
+                                delegate: ItemDelegate {
+                                    required property string modelData
+                                    width: dbList.width
+                                    height: 30
+                                    readonly property bool current: sessionObj && sessionObj.currentDatabase === modelData
+                                    contentItem: RowLayout {
+                                        spacing: 6
+                                        Text {
+                                            Layout.fillWidth: true; Layout.leftMargin: 6
+                                            text: modelData
+                                            color: current ? Theme.sqlTag : Theme.text
+                                            font.pixelSize: Theme.fontSm
+                                            font.weight: current ? Font.DemiBold : Font.Normal
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+                                    background: Rectangle { radius: Theme.radiusSm; color: hovered ? Theme.surface3 : "transparent" }
+                                    onClicked: { sessionObj.useDatabase(modelData); dbPop.close() }
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    visible: dbList.count === 0
+                                    text: qsTr("No matches")
+                                    color: Theme.textFaint; font.pixelSize: Theme.fontSm
+                                }
+                            }
+                        }
                     }
                 }
                 Text {
@@ -241,20 +296,64 @@ Item {
                 ColumnLayout {
                     anchors.fill: parent
                     spacing: 0
-                    Text {
+
+                    readonly property var filteredTables: {
+                        const all = sessionObj ? sessionObj.tables : []
+                        const q = tableSearch.text.trim().toLowerCase()
+                        return q === "" ? all : all.filter(t => t.toLowerCase().indexOf(q) !== -1)
+                    }
+
+                    RowLayout {
                         Layout.fillWidth: true
                         Layout.margins: 14
                         Layout.bottomMargin: 6
-                        text: qsTr("TABLES & VIEWS")
-                        color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
-                        font.letterSpacing: 0.6
+                        Text {
+                            Layout.fillWidth: true
+                            text: qsTr("TABLES & VIEWS")
+                            color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
+                            font.letterSpacing: 0.6
+                        }
+                        Text {
+                            text: parent.parent.filteredTables.length + (sessionObj && tableSearch.text ? "/" + sessionObj.tables.length : "")
+                            color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                        }
+                    }
+                    // Table filter.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12; Layout.rightMargin: 12; Layout.bottomMargin: 6
+                        implicitHeight: 30
+                        radius: Theme.radius
+                        color: Theme.surface
+                        border.color: tableSearch.activeFocus ? Theme.accent : Theme.border
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 9; anchors.rightMargin: 6
+                            spacing: 6
+                            Icon { name: "search"; size: 13; color: Theme.textFaint }
+                            TextField {
+                                id: tableSearch
+                                Layout.fillWidth: true
+                                padding: 0
+                                background: null
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSm
+                                placeholderText: qsTr("Filter tables")
+                                placeholderTextColor: Theme.textFaint
+                            }
+                            Icon {
+                                name: "x"; size: 11; color: Theme.textFaint
+                                visible: tableSearch.text !== ""
+                                TapHandler { onTapped: tableSearch.clear() }
+                            }
+                        }
                     }
                     ListView {
                         id: tablesList
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        model: sessionObj ? sessionObj.tables : []
+                        model: parent.filteredTables
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: ScrollBar {}
                         delegate: ItemDelegate {
@@ -341,6 +440,30 @@ Item {
                     readonly property bool hasGrid: res && res.columns.length > 0
                     property int selRow: -1
                     property int selCol: -1
+                    // Record search: only possible when the grid came from one table.
+                    readonly property string searchTable: sessionObj ? sessionObj.statsTable : ""
+                    readonly property bool canSearch: hasGrid && searchTable !== ""
+                    property string searchCol: ""
+
+                    // Runs a server-side search for rows where `searchCol` matches.
+                    function findRecords(exact) {
+                        if (!canSearch || searchCol === "") return
+                        const col = "[" + searchCol.replace(/]/g, "]]") + "]"
+                        const raw = recSearch.text
+                        if (raw.trim() === "") { sessionObj.execute("SELECT TOP 500 * FROM " + searchTable); return }
+                        let sql
+                        if (exact) {
+                            const v = raw.replace(/'/g, "''")
+                            sql = "SELECT TOP 500 * FROM " + searchTable
+                                + " WHERE CAST(" + col + " AS NVARCHAR(MAX)) = '" + v + "'"
+                        } else {
+                            let pat = raw.replace(/[\\%_\[]/g, m => "\\" + m).replace(/'/g, "''")
+                            sql = "SELECT TOP 500 * FROM " + searchTable
+                                + " WHERE CAST(" + col + " AS NVARCHAR(MAX)) LIKE '%" + pat + "%' ESCAPE '\\'"
+                        }
+                        editor.text = sql
+                        sessionObj.execute(sql)
+                    }
 
                     function copySel() {
                         if (!res || selRow < 0 || selCol < 0) return
@@ -411,12 +534,147 @@ Item {
 
                     Connections {
                         target: resultsArea.res
-                        function onResetted() { resultsArea.selRow = -1; resultsArea.selCol = -1; table.forceLayout() }
+                        function onResetted() {
+                            resultsArea.selRow = -1; resultsArea.selCol = -1
+                            // Default the search column to the first one if unset/stale.
+                            const cols = resultsArea.res ? resultsArea.res.columns : []
+                            if (cols.indexOf(resultsArea.searchCol) === -1)
+                                resultsArea.searchCol = cols.length ? cols[0] : ""
+                            table.forceLayout()
+                        }
                         function onSortChanged() { table.forceLayout() }
                     }
 
+                    // Record search bar — find rows by a column value (server-side).
+                    Rectangle {
+                        id: searchBar
+                        anchors { top: parent.top; left: parent.left; right: parent.right }
+                        height: 40
+                        visible: resultsArea.canSearch
+                        color: Theme.surface
+                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10; anchors.rightMargin: 10
+                            spacing: 8
+                            Icon { name: "search"; size: 14; color: Theme.textFaint }
+                            Text {
+                                text: qsTr("Find in")
+                                color: Theme.textDim; font.pixelSize: Theme.fontSm
+                            }
+
+                            // Column picker.
+                            Item {
+                                Layout.preferredWidth: 160
+                                implicitHeight: 28
+                                AbstractButton {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    focusPolicy: Qt.NoFocus
+                                    onClicked: { colPop.open(); colSearch.forceActiveFocus() }
+                                    background: Rectangle {
+                                        radius: Theme.radius
+                                        color: parent.hovered ? Theme.surface2 : Theme.bg
+                                        border.color: colPop.visible ? Theme.accent : Theme.border
+                                    }
+                                    contentItem: RowLayout {
+                                        spacing: 4
+                                        Text {
+                                            Layout.fillWidth: true; Layout.leftMargin: 10
+                                            text: resultsArea.searchCol || qsTr("column")
+                                            color: Theme.text; font.pixelSize: Theme.fontSm
+                                            font.family: Theme.monoFamily
+                                            verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                                        }
+                                        Icon { Layout.rightMargin: 8; name: "chevron"; size: 10; color: Theme.textFaint; rotation: 90 }
+                                    }
+                                }
+                                Popup {
+                                    id: colPop
+                                    y: parent.height + 4
+                                    width: 220
+                                    implicitHeight: Math.min(colColumn.implicitHeight + 12, 320)
+                                    padding: 6
+                                    onClosed: colSearch.clear()
+                                    background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+                                    readonly property var cols: {
+                                        const all = resultsArea.res ? resultsArea.res.columns : []
+                                        const q = colSearch.text.trim().toLowerCase()
+                                        return q === "" ? all : all.filter(c => c.toLowerCase().indexOf(q) !== -1)
+                                    }
+                                    contentItem: ColumnLayout {
+                                        id: colColumn
+                                        spacing: 6
+                                        Rectangle {
+                                            Layout.fillWidth: true; implicitHeight: 28; radius: Theme.radius
+                                            color: Theme.surface; border.color: colSearch.activeFocus ? Theme.accent : Theme.border
+                                            RowLayout {
+                                                anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 8; spacing: 6
+                                                Icon { name: "search"; size: 12; color: Theme.textFaint }
+                                                TextField {
+                                                    id: colSearch
+                                                    Layout.fillWidth: true; padding: 0; background: null
+                                                    color: Theme.text; font.pixelSize: Theme.fontSm
+                                                    placeholderText: qsTr("Search columns"); placeholderTextColor: Theme.textFaint
+                                                }
+                                            }
+                                        }
+                                        ListView {
+                                            id: colList
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: Math.min(contentHeight, 260)
+                                            clip: true
+                                            model: colPop.cols
+                                            boundsBehavior: Flickable.StopAtBounds
+                                            ScrollBar.vertical: ScrollBar {}
+                                            delegate: ItemDelegate {
+                                                required property string modelData
+                                                width: colList.width; height: 28
+                                                readonly property bool current: resultsArea.searchCol === modelData
+                                                contentItem: Text {
+                                                    leftPadding: 6; text: modelData
+                                                    color: current ? Theme.accent : Theme.text
+                                                    font.pixelSize: Theme.fontSm; font.family: Theme.monoFamily
+                                                    verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                                                }
+                                                background: Rectangle { radius: Theme.radiusSm; color: hovered ? Theme.surface3 : "transparent" }
+                                                onClicked: { resultsArea.searchCol = modelData; colPop.close() }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 28
+                                radius: Theme.radius
+                                color: Theme.bg
+                                border.color: recSearch.activeFocus ? Theme.accent : Theme.border
+                                RowLayout {
+                                    anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 6; spacing: 6
+                                    TextField {
+                                        id: recSearch
+                                        Layout.fillWidth: true; padding: 0; background: null
+                                        color: Theme.text; font.pixelSize: Theme.fontSm
+                                        placeholderText: qsTr("contains value…"); placeholderTextColor: Theme.textFaint
+                                        onAccepted: resultsArea.findRecords(false)
+                                    }
+                                    Icon {
+                                        name: "x"; size: 11; color: Theme.textFaint
+                                        visible: recSearch.text !== ""
+                                        TapHandler { onTapped: { recSearch.clear(); recSearch.forceActiveFocus() } }
+                                    }
+                                }
+                            }
+                            GhostButton { text: qsTr("Exact"); onClicked: resultsArea.findRecords(true) }
+                            PrimaryButton { text: qsTr("Find"); iconName: "search"; onClicked: resultsArea.findRecords(false) }
+                        }
+                    }
+
                     GridLayout {
-                        anchors.fill: parent
+                        anchors { left: parent.left; right: parent.right; bottom: parent.bottom
+                                  top: searchBar.visible ? searchBar.bottom : parent.top }
                         columns: 2
                         rowSpacing: 0
                         columnSpacing: 0
