@@ -178,12 +178,39 @@ void ConnectionStore::appendChildren(QList<Row>& rows, const QString& parentId, 
         return byName(x.name.isEmpty() ? x.host : x.name, y.name.isEmpty() ? y.host : y.name);
     });
     for (int i : folders) {
+        // Hide folders with no connection of the filtered type.
+        if (!m_typeFilter.isEmpty() && !folderHasType(m_folders[i].id, m_typeFilter))
+            continue;
         rows.append({true, i, depth, m_folders[i].id});
         if (m_folders[i].expanded)
             appendChildren(rows, m_folders[i].id, depth + 1);
     }
-    for (int i : hosts)
+    for (int i : hosts) {
+        if (!m_typeFilter.isEmpty() && m_hosts[i].type != m_typeFilter)
+            continue;
         rows.append({false, i, depth, m_hosts[i].id});
+    }
+}
+
+// True if the folder (or any descendant folder) holds a host of `type`.
+bool ConnectionStore::folderHasType(const QString& folderId, const QString& type) const
+{
+    for (const Host& h : m_hosts)
+        if (h.folderId == folderId && h.type == type)
+            return true;
+    for (const Folder& c : m_folders)
+        if (c.parentId == folderId && folderHasType(c.id, type))
+            return true;
+    return false;
+}
+
+void ConnectionStore::setTypeFilter(const QString& t)
+{
+    const QString v = (t == QLatin1String("rdp") || t == QLatin1String("mssql")) ? t : QString();
+    if (m_typeFilter == v)
+        return;
+    m_typeFilter = v;
+    rebuild();
 }
 
 // Rebuilds the visible rows and reports the change as one contiguous

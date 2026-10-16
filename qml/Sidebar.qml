@@ -125,6 +125,59 @@ Rectangle {
             }
         }
 
+        // Type filter — group the list by connection kind.
+        Row {
+            Layout.fillWidth: true
+            Layout.leftMargin: 14
+            Layout.rightMargin: 12
+            Layout.topMargin: 8
+            spacing: 6
+            Repeater {
+                model: [
+                    { f: "", label: qsTr("All"), icon: "" },
+                    { f: "rdp", label: qsTr("Desktops"), icon: "monitor" },
+                    { f: "mssql", label: qsTr("Databases"), icon: "database" }
+                ]
+                delegate: AbstractButton {
+                    required property var modelData
+                    readonly property bool sel: ConnectionStore.typeFilter === modelData.f
+                    readonly property color tint: modelData.f === "mssql" ? Theme.sqlTag
+                                               : modelData.f === "rdp" ? Theme.rdpTag : Theme.textDim
+                    height: 26
+                    implicitWidth: chipRow.implicitWidth + 18
+                    hoverEnabled: true
+                    focusPolicy: Qt.NoFocus
+                    onClicked: ConnectionStore.typeFilter = modelData.f
+                    background: Rectangle {
+                        radius: 13
+                        color: sel ? Qt.rgba(tint.r, tint.g, tint.b, 0.14)
+                                   : (hovered ? Theme.surface2 : "transparent")
+                        border.color: sel ? tint : Theme.border
+                        Behavior on color { ColorAnimation { duration: Theme.fast } }
+                    }
+                    contentItem: Row {
+                        id: chipRow
+                        anchors.centerIn: parent
+                        spacing: 5
+                        Icon {
+                            visible: modelData.icon !== ""
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: modelData.icon || "monitor"
+                            size: 12
+                            color: sel ? tint : Theme.textFaint
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.label
+                            color: sel ? Theme.text : Theme.textDim
+                            font.pixelSize: Theme.fontXs
+                            font.weight: sel ? Font.DemiBold : Font.Normal
+                        }
+                    }
+                }
+            }
+        }
+
         ListView {
             id: list
             Layout.fillWidth: true
