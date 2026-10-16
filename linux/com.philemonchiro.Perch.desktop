@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Perch
+GenericName=Remote Desktop Client
+Comment=Connect to Windows machines over RDP
+Exec=Perch
+Icon=com.philemonchiro.Perch
+Terminal=false
+Categories=Network;RemoteAccess;Utility;
+Keywords=RDP;Remote;Desktop;Windows;FreeRDP;
+StartupWMClass=Perch
