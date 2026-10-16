@@ -62,3 +62,33 @@ jobs:
           SQL_USER: sa
           SQL_QUERY: "SELECT name, database_id FROM sys.databases ORDER BY database_id"
         run: /tmp/sql_probe
+
+  # Windows side of the native-stack de-risk: FreeTDS via vcpkg (the same
+  # toolchain the app's Windows build uses). The TDS connection itself is
+  # identical across platforms and already proven on Linux, so here we only
+  # confirm the probe compiles, links against vcpkg's sybdb, and that the
+  # runtime DLL is present to bundle.
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: FreeTDS (vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install freetds:x64-windows
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build the probe
+        shell: pwsh
+        run: |
+          $inc = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include"
+          $lib = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib"
+          cl /std:c++17 /EHsc spike\sql_probe.cpp /I"$inc" /Fe:sql_probe.exe `
+            /link /LIBPATH:"$lib" sybdb.lib
+          if ($LASTEXITCODE -ne 0) { throw "compile/link failed" }
+          # Confirm the runtime DLL exists so the app can bundle it next to the exe.
+          $dll = Get-ChildItem "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin" -Filter "sybdb*.dll" -ErrorAction SilentlyContinue
+          if (-not $dll) { throw "sybdb DLL not found for bundling" }
+          Write-Host "linked ok; runtime DLL: $($dll.Name)"
