@@ -10,6 +10,7 @@ permissions:
 env:
   QT_VERSION: "6.9.3"
   QTKEYCHAIN_REF: "0.15.0"
+  FREERDP_VERSION: "3.32.2"
 
 jobs:
   release:
@@ -49,11 +50,50 @@ jobs:
           brew install freerdp ninja
           brew list --versions freerdp
 
+      # Cache the from-source FreeRDP install so it is rebuilt only when the
+      # version changes (saves ~4 min/run).
+      - name: Cache FreeRDP (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/deps
+          key: freerdp-${{ matrix.os }}-${{ env.FREERDP_VERSION }}-v1
+
       - name: FreeRDP (Linux)
         if: runner.os == 'Linux'
+        # Ubuntu ships FreeRDP ~3.5, below Perch's >= 3.32 security floor, so
+        # build 3.32.x from source into the shared deps prefix.
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y ninja-build freerdp3-dev libsecret-1-dev libgl1-mesa-dev libxkbcommon-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+            libssl-dev zlib1g-dev libsecret-1-dev libgl1-mesa-dev \
+            libx11-dev libxext-dev libxcursor-dev libxkbcommon-dev libxkbfile-dev \
+            libxrandr-dev libxi-dev libxfixes-dev libxdamage-dev libxrender-dev \
+            libxinerama-dev libfuse2 \
+            libkrb5-dev libcjson-dev liburiparser-dev
+          if ls "$RUNNER_TEMP"/deps/lib*/libfreerdp3.so* >/dev/null 2>&1; then
+            echo "FreeRDP $FREERDP_VERSION restored from cache; skipping build"
+          else
+            git clone --depth 1 --branch "$FREERDP_VERSION" https://github.com/FreeRDP/FreeRDP.git "$RUNNER_TEMP/freerdp"
+            cmake -S "$RUNNER_TEMP/freerdp" -B "$RUNNER_TEMP/freerdp/build" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/deps" \
+              -DWITH_SERVER=OFF -DWITH_SAMPLE=OFF -DBUILD_TESTING=OFF -DWITH_MANPAGES=OFF \
+              -DWITH_SWSCALE=OFF -DWITH_FFMPEG=OFF -DWITH_X11=OFF -DWITH_WAYLAND=OFF \
+              -DWITH_CUPS=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_PCSC=OFF -DWITH_CLIENT_SDL=OFF -DWITH_FUSE=OFF -DCHANNEL_URBDRC=OFF
+            cmake --build "$RUNNER_TEMP/freerdp/build"
+            cmake --install "$RUNNER_TEMP/freerdp/build"
+          fi
+
+      # Cache vcpkg's built packages so FreeRDP is not recompiled each run
+      # (saves the bulk of the ~9 min Windows build). The >= 3.32 compile floor
+      # fails the build if a stale cache ever pins an older FreeRDP.
+      - name: Cache vcpkg (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-${{ matrix.os }}-freerdp-v1
 
       - name: FreeRDP (Windows, vcpkg)
         if: runner.os == 'Windows'
@@ -146,6 +186,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist && cp build/Perch.exe dist/
           cp "$RUNNER_TEMP"/deps/bin/*.dll dist/ 2>/dev/null || true
           cp "$VCPKG_INSTALLATION_ROOT"/installed/x64-windows/bin/*.dll dist/ 2>/dev/null || true
@@ -153,14 +194,54 @@ jobs:
           # from the exe dir, so place it beside windeployqt before running it.
           cp "$RUNNER_TEMP"/deps/bin/*.dll "$(dirname "$(command -v windeployqt)")/" 2>/dev/null || true
           windeployqt --qmldir qml --release dist/Perch.exe
-          cd dist && 7z a ../Perch-Windows-x64.zip . >/dev/null
+          # NLA needs OpenSSL's legacy provider (MD4/RC4); ship and activate it.
+          bash .github/scripts/bundle-openssl-legacy-win.sh dist
+          cp windows/perch.ico dist/ 2>/dev/null || true
+          ( cd dist && 7z a ../Perch-Windows-x64.zip . >/dev/null )
+          # One-click installer via Inno Setup (preinstalled on the runner).
+          VERSION="${GITHUB_REF_NAME#v}"
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          [ -f "$ISCC" ] || choco install innosetup -y --no-progress
+          "$ISCC" "//DAppVersion=$VERSION" "//DSourceDir=$(cygpath -w "$PWD/dist")" "//O$(cygpath -w "$PWD")" .github/installer/perch.iss
+          ls -l Perch-Setup-x64.exe
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
-          mkdir -p Perch-linux && cp build/Perch Perch-linux/
-          cp README.md LICENSE NOTICE Perch-linux/ 2>/dev/null || true
-          tar czf Perch-Linux-x64.tar.gz -C Perch-linux .
+          set -euo pipefail
+          # Install into an AppDir (install rule puts the binary in usr/bin).
+          DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
+          install -Dm644 linux/com.philemonchiro.Perch.desktop \
+            AppDir/usr/share/applications/com.philemonchiro.Perch.desktop
+          install -Dm644 linux/perch.png \
+            AppDir/usr/share/icons/hicolor/256x256/apps/com.philemonchiro.Perch.png
+          # NLA needs OpenSSL's legacy provider (MD4/RC4). Bundle it and activate
+          # it from an AppRun hook, since the system provider is not deployed.
+          MOD=$(openssl version -m 2>/dev/null | sed -E 's/.*"(.*)".*/\1/')
+          : "${MOD:=/usr/lib/x86_64-linux-gnu/ossl-modules}"
+          install -Dm644 "$MOD/legacy.so" AppDir/usr/lib/ossl-modules/legacy.so
+          printf '%s\n' 'openssl_conf = openssl_init' '[openssl_init]' \
+            'providers = provider_sect' '[provider_sect]' 'default = default_sect' \
+            'legacy = legacy_sect' '[default_sect]' 'activate = 1' \
+            '[legacy_sect]' 'activate = 1' > AppDir/usr/lib/ossl-modules/openssl.cnf
+          mkdir -p AppDir/apprun-hooks
+          printf '%s\n' \
+            'if [ -d "$APPDIR/usr/lib/ossl-modules" ]; then' \
+            '  export OPENSSL_MODULES="$APPDIR/usr/lib/ossl-modules"' \
+            '  export OPENSSL_CONF="$APPDIR/usr/lib/ossl-modules/openssl.cnf"' \
+            'fi' > AppDir/apprun-hooks/10-openssl-legacy.sh
+          # linuxdeploy + Qt plugin bundle Qt, QML, FreeRDP and QtKeychain.
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/deps/lib:${LD_LIBRARY_PATH:-}"
+          export QML_SOURCES_PATHS="$PWD/qml"
+          export OUTPUT="Perch-x86_64.AppImage"
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage \
+            -i AppDir/usr/share/icons/hicolor/256x256/apps/com.philemonchiro.Perch.png \
+            -d AppDir/usr/share/applications/com.philemonchiro.Perch.desktop
+          ls -l Perch-x86_64.AppImage
 
       - name: Publish to the GitHub Release
         uses: softprops/action-gh-release@v3
@@ -168,6 +249,7 @@ jobs:
           files: |
             Perch-macOS.dmg
             Perch-Windows-x64.zip
-            Perch-Linux-x64.tar.gz
+            Perch-Setup-x64.exe
+            Perch-x86_64.AppImage
           generate_release_notes: true
           fail_on_unmatched_files: false

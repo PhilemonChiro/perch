@@ -18,19 +18,25 @@ int main(int argc, char* argv[])
     QGuiApplication app(argc, argv);
     app.setApplicationName("Relay");
     app.setOrganizationName("Relay");
-    app.setApplicationVersion(QStringLiteral("0.1.2"));
+    app.setApplicationVersion(QStringLiteral("0.1.3"));
 
-#ifdef Q_OS_MACOS
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     // NLA authenticates with NTLM, whose password hash is MD4 (and whose key
     // exchange uses RC4). OpenSSL 3/4 keeps both in its "legacy" provider,
-    // which is not loaded by default and lives at a Homebrew path absent on
-    // users' Macs — so FreeRDP's MD4 lookup fails and NLA aborts with
+    // which is not loaded by default and lives at a build-time path absent on
+    // users' machines — so FreeRDP's MD4 lookup fails and NLA aborts with
     // SEC_E_NO_CREDENTIALS even for correct credentials. When we run from a
-    // bundle that ships the provider, point OpenSSL at it and activate it (via
+    // package that ships the provider, point OpenSSL at it and activate it (via
     // the bundled openssl.cnf) before any TLS use. Dev builds have no such
     // directory and are left on the system OpenSSL.
-    if (const QString mod = app.applicationDirPath() + QStringLiteral("/../Frameworks/ossl-modules");
-        QFileInfo::exists(mod + QStringLiteral("/legacy.dylib"))) {
+#  ifdef Q_OS_MACOS
+    const QString mod = app.applicationDirPath() + QStringLiteral("/../Frameworks/ossl-modules");
+    const QString provider = mod + QStringLiteral("/legacy.dylib");
+#  else
+    const QString mod = app.applicationDirPath() + QStringLiteral("/ossl-modules");
+    const QString provider = mod + QStringLiteral("/legacy.dll");
+#  endif
+    if (QFileInfo::exists(provider)) {
         qputenv("OPENSSL_MODULES", QFile::encodeName(QDir::cleanPath(mod)));
         qputenv("OPENSSL_CONF", QFile::encodeName(QDir::cleanPath(mod + QStringLiteral("/openssl.cnf"))));
     }
