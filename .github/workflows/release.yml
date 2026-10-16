@@ -10,6 +10,7 @@ permissions:
 env:
   QT_VERSION: "6.9.3"
   QTKEYCHAIN_REF: "0.15.0"
+  FREERDP_VERSION: "3.32.2"
 
 jobs:
   release:
@@ -49,6 +50,15 @@ jobs:
           brew install freerdp ninja
           brew list --versions freerdp
 
+      # Cache the from-source FreeRDP install so it is rebuilt only when the
+      # version changes (saves ~4 min/run).
+      - name: Cache FreeRDP (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/deps
+          key: freerdp-${{ matrix.os }}-${{ env.FREERDP_VERSION }}-v1
+
       - name: FreeRDP (Linux)
         if: runner.os == 'Linux'
         # Ubuntu ships FreeRDP ~3.5, below Perch's >= 3.32 security floor, so
@@ -62,14 +72,28 @@ jobs:
             libxrandr-dev libxi-dev libxfixes-dev libxdamage-dev libxrender-dev \
             libxinerama-dev libfuse2 \
             libkrb5-dev libcjson-dev liburiparser-dev
-          git clone --depth 1 --branch 3.32.2 https://github.com/FreeRDP/FreeRDP.git "$RUNNER_TEMP/freerdp"
-          cmake -S "$RUNNER_TEMP/freerdp" -B "$RUNNER_TEMP/freerdp/build" -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/deps" \
-            -DWITH_SERVER=OFF -DWITH_SAMPLE=OFF -DBUILD_TESTING=OFF -DWITH_MANPAGES=OFF \
-            -DWITH_SWSCALE=OFF -DWITH_FFMPEG=OFF -DWITH_X11=OFF -DWITH_WAYLAND=OFF \
-            -DWITH_CUPS=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_PCSC=OFF -DWITH_CLIENT_SDL=OFF -DWITH_FUSE=OFF -DCHANNEL_URBDRC=OFF
-          cmake --build "$RUNNER_TEMP/freerdp/build"
-          cmake --install "$RUNNER_TEMP/freerdp/build"
+          if ls "$RUNNER_TEMP"/deps/lib*/libfreerdp3.so* >/dev/null 2>&1; then
+            echo "FreeRDP $FREERDP_VERSION restored from cache; skipping build"
+          else
+            git clone --depth 1 --branch "$FREERDP_VERSION" https://github.com/FreeRDP/FreeRDP.git "$RUNNER_TEMP/freerdp"
+            cmake -S "$RUNNER_TEMP/freerdp" -B "$RUNNER_TEMP/freerdp/build" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/deps" \
+              -DWITH_SERVER=OFF -DWITH_SAMPLE=OFF -DBUILD_TESTING=OFF -DWITH_MANPAGES=OFF \
+              -DWITH_SWSCALE=OFF -DWITH_FFMPEG=OFF -DWITH_X11=OFF -DWITH_WAYLAND=OFF \
+              -DWITH_CUPS=OFF -DWITH_PULSE=OFF -DWITH_ALSA=OFF -DWITH_PCSC=OFF -DWITH_CLIENT_SDL=OFF -DWITH_FUSE=OFF -DCHANNEL_URBDRC=OFF
+            cmake --build "$RUNNER_TEMP/freerdp/build"
+            cmake --install "$RUNNER_TEMP/freerdp/build"
+          fi
+
+      # Cache vcpkg's built packages so FreeRDP is not recompiled each run
+      # (saves the bulk of the ~9 min Windows build). The >= 3.32 compile floor
+      # fails the build if a stale cache ever pins an older FreeRDP.
+      - name: Cache vcpkg (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-${{ matrix.os }}-freerdp-v1
 
       - name: FreeRDP (Windows, vcpkg)
         if: runner.os == 'Windows'
