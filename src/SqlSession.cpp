@@ -401,11 +401,12 @@ void SqlSession::setIdleTimeout(int ms)
         kickIdle();
 }
 
-void SqlSession::connectWith(const QString& password)
+void SqlSession::connectWith(const QString& password, bool remember)
 {
     if (m_state == Connecting || m_state == Connected || m_state == Executing)
         return;
     m_password = password;
+    m_remember = remember;
     m_errorText.clear();
     emit errorChanged();
     m_statusText = QStringLiteral("Connecting…");
@@ -531,6 +532,10 @@ void SqlSession::onConnected(const QStringList& databases, const QString& curren
     emit statusChanged();
     setState(Connected);
     kickIdle();
+
+    // Persist the password now that we know it works, if asked.
+    if (m_remember && !m_hostId.isEmpty() && !m_password.isEmpty())
+        emit rememberPassword(m_password);
 
     if (!m_pendingSql.isEmpty()) {
         const QString sql = m_pendingSql;

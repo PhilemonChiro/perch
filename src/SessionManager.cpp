@@ -94,6 +94,11 @@ int SessionManager::add(QObject* s)
             if (q->state() == SqlSession::Connected && !q->hostId().isEmpty())
                 ConnectionStore::instance()->touch(q->hostId());
         });
+        // Persist the password to the keychain when the user asked to remember it.
+        connect(q, &SqlSession::rememberPassword, this, [q](const QString& pw) {
+            if (!q->hostId().isEmpty())
+                Credentials::write(q->hostId(), pw);
+        });
     }
 
     emit countChanged();
@@ -227,7 +232,14 @@ int SessionManager::openDatabaseHost(const QString& hostId)
     const int port = h.value("port").toInt() > 0 ? h.value("port").toInt() : 1433;
     auto* s = new SqlSession(hostId, h.value("host").toString(), port,
                              h.value("username").toString(), h.value("database").toString(), this);
-    return add(s);
+    const int row = add(s);
+    // Auto-connect with a remembered keychain password, if one is stored.
+    QPointer<SqlSession> guard(s);
+    Credentials::read(hostId, [guard](bool found, const QString& pw) {
+        if (guard && found && !pw.isEmpty())
+            guard->connectWith(pw, true);
+    });
+    return row;
 }
 
 int SessionManager::quickConnectDatabase(const QString& text)

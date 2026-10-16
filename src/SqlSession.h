@@ -89,8 +89,10 @@ public:
     bool isIdle() const { return m_state == Paused; }
     SqlResultModel* result() const { return m_result; }
 
-    // Connects using a password held in memory for the tab's lifetime.
-    Q_INVOKABLE void connectWith(const QString& password);
+    // Connects using a password held in memory for the tab's lifetime. When
+    // `remember` is set and this is a saved connection, the password is also
+    // written to the OS keychain so reopening auto-connects.
+    Q_INVOKABLE void connectWith(const QString& password, bool remember = false);
     // Re-establishes a connection that was idled out (or failed), reusing the
     // in-memory password. No-op if the password was never supplied.
     Q_INVOKABLE void reconnect();
@@ -113,6 +115,9 @@ signals:
     void currentDatabaseChanged();
     void tablesChanged();
     void statsChanged();
+    // Emitted after a successful connect when the user chose to remember the
+    // password for a saved connection; SessionManager writes it to the keychain.
+    void rememberPassword(const QString& password);
 
     // GUI -> worker (queued).
     void doConnect(const QString& host, int port, const QString& user,
@@ -149,9 +154,10 @@ private:
     qint64 m_tableRowCount = -1;
     qint64 m_tableSizeKb = -1;
 
-    QString m_password;    // in memory only, for the tab's lifetime
+    QString m_password;    // in memory for the tab's lifetime (keychain only if remembered)
     QString m_pendingSql;  // a query to run once a resume completes
     bool m_haveConnected = false;
+    bool m_remember = false;
 
     QTimer m_idleTimer;
     int m_idleTimeout = 10 * 60 * 1000; // 10 minutes

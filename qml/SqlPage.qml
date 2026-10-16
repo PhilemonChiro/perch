@@ -53,7 +53,7 @@ Item {
             padding: 28
             elevation: 1.2
 
-            function submit() { if (sessionObj) sessionObj.connectWith(pass.text) }
+            function submit() { if (sessionObj) sessionObj.connectWith(pass.text, remember.checked) }
 
             ColumnLayout {
                 id: gcol
@@ -104,6 +104,13 @@ Item {
                     password: true
                     onAccepted: gate.submit()
                     Component.onCompleted: focusInput()
+                }
+                Toggle {
+                    id: remember
+                    // Only saved connections can persist a password.
+                    visible: sessionObj && sessionObj.hostId !== ""
+                    checked: true
+                    label: qsTr("Remember in keychain")
                 }
                 RowLayout {
                     Layout.fillWidth: true
