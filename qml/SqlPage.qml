@@ -29,6 +29,12 @@ Item {
         const sel = editor.selectedText
         sessionObj.execute(sel.length > 0 ? sel : editor.text)
     }
+    function fmtSize(kb) {
+        if (kb < 0) return ""
+        if (kb < 1024) return kb + " KB"
+        if (kb < 1048576) return (kb / 1024).toFixed(1) + " MB"
+        return (kb / 1048576).toFixed(2) + " GB"
+    }
 
     onActiveChanged: if (active && everConnected) editor.forceActiveFocus()
 
@@ -339,6 +345,62 @@ Item {
                         Clipboard.copy(res.rowText(selRow))
                         page.toast(qsTr("Row copied"), "info")
                     }
+                    function copyRowJson() {
+                        if (!res || selRow < 0) return
+                        const cols = res.columns, o = {}
+                        for (let c = 0; c < cols.length; c++)
+                            o[cols[c]] = res.cellText(selRow, c)
+                        Clipboard.copy(JSON.stringify(o, null, 2))
+                        page.toast(qsTr("Row copied as JSON"), "info")
+                    }
+                    function copyColumn() {
+                        if (!res || selCol < 0) return
+                        const out = []
+                        for (let r = 0; r < res.rows; r++)
+                            out.push(res.cellText(r, selCol))
+                        Clipboard.copy(out.join("\n"))
+                        page.toast(qsTr("Column copied (%1 values)").arg(res.rows), "info")
+                    }
+                    function copyInsert() {
+                        if (!res || selRow < 0) return
+                        const cols = res.columns
+                        const tbl = sessionObj && sessionObj.statsTable ? sessionObj.statsTable : "table"
+                        const vals = []
+                        for (let c = 0; c < cols.length; c++) {
+                            const v = res.cellText(selRow, c)
+                            if (v === "NULL") vals.push("NULL")
+                            else if (/^-?\d+(\.\d+)?$/.test(v)) vals.push(v)
+                            else vals.push("'" + v.replace(/'/g, "''") + "'")
+                        }
+                        Clipboard.copy("INSERT INTO " + tbl + " (" + cols.join(", ") + ")\nVALUES (" + vals.join(", ") + ");")
+                        page.toast(qsTr("Copied as INSERT"), "info")
+                    }
+
+                    // Right-click menu for the selected cell/row.
+                    Menu {
+                        id: cellMenu
+                        padding: 6
+                        background: Rectangle { implicitWidth: 210; radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+                        enter: Transition { ParallelAnimation {
+                            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.fast }
+                            NumberAnimation { property: "scale"; from: 0.96; to: 1; duration: Theme.normal; easing.type: Theme.easing } } }
+                        exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 80 } }
+                        delegate: MenuItem {
+                            id: cmi
+                            implicitHeight: 30
+                            contentItem: Text {
+                                leftPadding: 6; text: cmi.text; color: Theme.text
+                                font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle { radius: Theme.radiusSm; color: cmi.highlighted ? Theme.surface3 : "transparent" }
+                        }
+                        Action { text: qsTr("Copy cell"); onTriggered: resultsArea.copySel() }
+                        Action { text: qsTr("Copy row"); onTriggered: resultsArea.copyRow() }
+                        Action { text: qsTr("Copy row as JSON"); onTriggered: resultsArea.copyRowJson() }
+                        Action { text: qsTr("Copy as INSERT"); onTriggered: resultsArea.copyInsert() }
+                        MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: Theme.border } }
+                        Action { text: qsTr("Copy column"); onTriggered: resultsArea.copyColumn() }
+                    }
 
                     Connections {
                         target: resultsArea.res
@@ -447,6 +509,14 @@ Item {
                                     onTapped: { resultsArea.selRow = cell.row; resultsArea.selCol = cell.column }
                                     onDoubleTapped: { resultsArea.selRow = cell.row; resultsArea.selCol = cell.column; resultsArea.copySel() }
                                 }
+                                TapHandler {
+                                    acceptedButtons: Qt.RightButton
+                                    onTapped: {
+                                        resultsArea.selRow = cell.row
+                                        resultsArea.selCol = cell.column
+                                        cellMenu.popup()
+                                    }
+                                }
                                 Text {
                                     anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 6
                                     verticalAlignment: Text.AlignVCenter
@@ -494,10 +564,28 @@ Item {
                             text: sessionObj ? sessionObj.statusText : ""
                             color: Theme.textDim; font.pixelSize: Theme.fontXs
                         }
+                        // Table stats (total rows / size) stream in from the
+                        // background once the query targets a single table.
+                        Text {
+                            visible: sessionObj && sessionObj.statsTable !== ""
+                                     && sessionObj.tableRowCount >= 0
+                            text: {
+                                if (!sessionObj || sessionObj.tableRowCount < 0) return ""
+                                let s = Number(sessionObj.tableRowCount).toLocaleString(Qt.locale(), 'f', 0) + qsTr(" rows")
+                                const sz = page.fmtSize(sessionObj.tableSizeKb)
+                                if (sz) s += "  ·  " + sz
+                                return sessionObj.statsTable + ":  " + s
+                            }
+                            color: Theme.textDim; font.pixelSize: Theme.fontXs
+                        }
+                        Rectangle {
+                            visible: sessionObj && sessionObj.statsTable !== "" && sessionObj.tableRowCount >= 0
+                            width: 1; height: 12; color: Theme.border
+                        }
                         Item { Layout.fillWidth: true }
                         Text {
                             visible: sessionObj && sessionObj.result.columns.length > 0
-                            text: sessionObj ? sessionObj.result.rows + qsTr(" rows · ") + sessionObj.elapsedMs + " ms" : ""
+                            text: sessionObj ? sessionObj.result.rows + qsTr(" shown · ") + sessionObj.elapsedMs + " ms" : ""
                             color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily
                         }
                     }

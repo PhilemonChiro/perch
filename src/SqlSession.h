@@ -48,6 +48,10 @@ class SqlSession : public QObject
     Q_PROPERTY(QStringList databases READ databases NOTIFY databasesChanged)
     Q_PROPERTY(QString currentDatabase READ currentDatabase NOTIFY currentDatabaseChanged)
     Q_PROPERTY(QStringList tables READ tables NOTIFY tablesChanged)
+    // Background-fetched stats for the single table the last SELECT read from.
+    Q_PROPERTY(QString statsTable READ statsTable NOTIFY statsChanged)
+    Q_PROPERTY(qint64 tableRowCount READ tableRowCount NOTIFY statsChanged)
+    Q_PROPERTY(qint64 tableSizeKb READ tableSizeKb NOTIFY statsChanged)
     Q_PROPERTY(bool idle READ isIdle NOTIFY stateChanged)
     Q_PROPERTY(SqlResultModel* result READ result CONSTANT)
 
@@ -79,6 +83,9 @@ public:
     QStringList databases() const { return m_databases; }
     QString currentDatabase() const { return m_currentDatabase; }
     QStringList tables() const { return m_tables; }
+    QString statsTable() const { return m_statsTable; }
+    qint64 tableRowCount() const { return m_tableRowCount; }
+    qint64 tableSizeKb() const { return m_tableSizeKb; }
     bool isIdle() const { return m_state == Paused; }
     SqlResultModel* result() const { return m_result; }
 
@@ -105,12 +112,14 @@ signals:
     void databasesChanged();
     void currentDatabaseChanged();
     void tablesChanged();
+    void statsChanged();
 
     // GUI -> worker (queued).
     void doConnect(const QString& host, int port, const QString& user,
                    const QString& password, const QString& database);
     void doExecute(const QString& sql);
     void doUseDatabase(const QString& name);
+    void doStats(const QString& table);
 
 private:
     void setState(State s);
@@ -120,6 +129,10 @@ private:
     void onResult(const QStringList& columns, const QVector<QStringList>& rows,
                   int affected, qint64 elapsed, const QString& message);
     void onSwitched(const QString& currentDb, const QStringList& tables);
+    void onStats(const QString& table, qint64 rowCount, qint64 sizeKb);
+    // Returns the single source table of a plain SELECT, or "" if the query
+    // joins, lists several tables, or isn't a simple table read.
+    static QString sourceTable(const QString& sql);
 
     const QString m_hostId, m_title, m_host;
     const int m_port;
@@ -131,6 +144,10 @@ private:
     qint64 m_elapsed = 0;
     QStringList m_databases, m_tables;
     QString m_currentDatabase;
+
+    QString m_statsTable, m_pendingStatsTable;
+    qint64 m_tableRowCount = -1;
+    qint64 m_tableSizeKb = -1;
 
     QString m_password;    // in memory only, for the tab's lifetime
     QString m_pendingSql;  // a query to run once a resume completes

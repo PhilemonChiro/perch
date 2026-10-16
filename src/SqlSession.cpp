@@ -3,6 +3,7 @@
 #include <QElapsedTimer>
 #include <QMetaType>
 #include <QObject>
+#include <QRegularExpression>
 
 #include <sybdb.h>
 #include <sybfront.h>
@@ -124,6 +125,36 @@ public slots:
         emit result(columns, rows, affected, ms, msg);
     }
 
+    // Fetches fast metadata stats (no table scan) for one table on this same
+    // worker thread, after the result grid is already shown.
+    void statsFor(const QString& table)
+    {
+        t_current = this;
+        if (!m_proc) {
+            emit statsReady(table, -1, -1);
+            return;
+        }
+        m_err.clear();
+        QString esc = table;
+        esc.replace(QLatin1Char('\''), QStringLiteral("''"));
+        const QString q = QStringLiteral(
+            "SELECT CAST(SUM(CASE WHEN index_id IN (0,1) THEN row_count ELSE 0 END) AS BIGINT), "
+            "CAST(SUM(reserved_page_count) * 8 AS BIGINT) "
+            "FROM sys.dm_db_partition_stats WHERE object_id = OBJECT_ID('%1')").arg(esc);
+        QStringList cols;
+        QVector<QStringList> rows;
+        int affected = -1;
+        QString err;
+        if (runQuery(q, cols, rows, affected, err) && !rows.isEmpty() && rows.first().size() >= 2) {
+            bool ok1 = false, ok2 = false;
+            const qint64 rc = rows.first().at(0).toLongLong(&ok1);
+            const qint64 kb = rows.first().at(1).toLongLong(&ok2);
+            emit statsReady(table, ok1 ? rc : -1, ok2 ? kb : -1);
+        } else {
+            emit statsReady(table, -1, -1);
+        }
+    }
+
     void shutdown() { closeProc(); }
 
 signals:
@@ -132,6 +163,7 @@ signals:
     void failed(const QString& error);
     void result(const QStringList& columns, const QVector<QStringList>& rows,
                 int affected, qint64 elapsedMs, const QString& message);
+    void statsReady(const QString& table, qint64 rowCount, qint64 sizeKb);
 
 public:
     QString m_err; // appended to by the global handlers for the current call
@@ -316,10 +348,12 @@ SqlSession::SqlSession(const QString& hostId, const QString& host, int port,
     connect(this, &SqlSession::doConnect, m_worker, &SqlWorker::connectTo);
     connect(this, &SqlSession::doExecute, m_worker, &SqlWorker::run);
     connect(this, &SqlSession::doUseDatabase, m_worker, &SqlWorker::switchTo);
+    connect(this, &SqlSession::doStats, m_worker, &SqlWorker::statsFor);
     connect(m_worker, &SqlWorker::connected, this, &SqlSession::onConnected);
     connect(m_worker, &SqlWorker::switched, this, &SqlSession::onSwitched);
     connect(m_worker, &SqlWorker::failed, this, &SqlSession::onFailed);
     connect(m_worker, &SqlWorker::result, this, &SqlSession::onResult);
+    connect(m_worker, &SqlWorker::statsReady, this, &SqlSession::onStats);
     m_thread.start();
 }
 
@@ -396,10 +430,52 @@ void SqlSession::reconnect()
     emit doConnect(m_host, m_port, m_username, m_password, m_currentDatabase);
 }
 
+QString SqlSession::sourceTable(const QString& sql)
+{
+    const QString s = sql.trimmed();
+    static const QRegularExpression sel(QStringLiteral("^select\\b"),
+                                        QRegularExpression::CaseInsensitiveOption);
+    if (!sel.match(s).hasMatch())
+        return {};
+    static const QRegularExpression join(QStringLiteral("\\bjoin\\b"),
+                                         QRegularExpression::CaseInsensitiveOption);
+    if (s.contains(join))
+        return {};
+    // db.schema.table (1–3 dotted, optionally bracketed) right after FROM.
+    static const QRegularExpression from(
+        QStringLiteral("\\bfrom\\s+(\\[?[A-Za-z_@#][\\w$]*\\]?(?:\\.\\[?[A-Za-z_@#][\\w$]*\\]?){0,2})"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto m = from.match(s);
+    if (!m.hasMatch())
+        return {};
+    // Reject comma-separated (old-style multi-table) FROM lists.
+    const QString afterFrom = s.mid(m.capturedEnd(1));
+    static const QRegularExpression nextClause(
+        QStringLiteral("\\b(where|group|order|having|union|for|option)\\b"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto nc = nextClause.match(afterFrom);
+    const QString fromTail = nc.hasMatch() ? afterFrom.left(nc.capturedStart(0)) : afterFrom;
+    if (fromTail.contains(QLatin1Char(',')))
+        return {};
+    // A table read, not a function/derived table.
+    QString t = m.captured(1);
+    if (t.contains(QLatin1Char('(')))
+        return {};
+    return t;
+}
+
 void SqlSession::execute(const QString& sql)
 {
     if (sql.trimmed().isEmpty())
         return;
+    // Reset table stats; refetched after the result if this is a single-table read.
+    m_pendingStatsTable = sourceTable(sql);
+    if (!m_statsTable.isEmpty() || m_tableRowCount >= 0 || m_tableSizeKb >= 0) {
+        m_statsTable.clear();
+        m_tableRowCount = -1;
+        m_tableSizeKb = -1;
+        emit statsChanged();
+    }
     if (m_state == Paused || m_state == Disconnected || m_state == Failed) {
         m_pendingSql = sql; // resume: reconnect, then run once live
         reconnect();
@@ -507,6 +583,20 @@ void SqlSession::onResult(const QStringList& columns, const QVector<QStringList>
     emit statusChanged();
     setState(Connected);
     kickIdle();
+
+    // Kick off the background table-stats fetch for a single-table read.
+    if (!columns.isEmpty() && !m_pendingStatsTable.isEmpty())
+        emit doStats(m_pendingStatsTable);
+}
+
+void SqlSession::onStats(const QString& table, qint64 rowCount, qint64 sizeKb)
+{
+    if (table != m_pendingStatsTable) // a newer query superseded this request
+        return;
+    m_statsTable = table;
+    m_tableRowCount = rowCount;
+    m_tableSizeKb = sizeKb;
+    emit statsChanged();
 }
 
 #include "SqlSession.moc"
