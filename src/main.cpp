@@ -8,6 +8,7 @@
 #include <QTimer>
 
 #include "RdpSession.h"
+#include "SqlSession.h"
 #include "SessionManager.h"
 
 int main(int argc, char* argv[])
@@ -65,8 +66,21 @@ int main(int argc, char* argv[])
     }
 
     // Dev aid: RELAY_SQL=[user@]host[:port][/db] opens a SQL Server console tab.
+    // Optional RELAY_SQL_PASSWORD connects it; RELAY_SQL_QUERY runs once live.
     if (const QString t = qEnvironmentVariable("RELAY_SQL"); !t.isEmpty()) {
-        QTimer::singleShot(300, [t] { SessionManager::create(nullptr, nullptr)->quickConnectDatabase(t); });
+        QTimer::singleShot(300, [t] {
+            auto* mgr = SessionManager::create(nullptr, nullptr);
+            auto* s = qobject_cast<SqlSession*>(mgr->at(mgr->quickConnectDatabase(t)));
+            if (!s)
+                return;
+            if (qEnvironmentVariableIsSet("RELAY_SQL_QUERY"))
+                QObject::connect(s, &SqlSession::stateChanged, s, [s] {
+                    if (s->state() == SqlSession::Connected && s->result()->rowCountProp() == 0)
+                        s->execute(qEnvironmentVariable("RELAY_SQL_QUERY"));
+                });
+            if (qEnvironmentVariableIsSet("RELAY_SQL_PASSWORD"))
+                s->connectWith(qEnvironmentVariable("RELAY_SQL_PASSWORD"));
+        });
     }
 
     // Dev aid: RELAY_SCREENSHOT=out.png saves the window after startup and exits.
