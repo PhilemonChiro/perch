@@ -58,7 +58,8 @@ jobs:
             libssl-dev zlib1g-dev libsecret-1-dev libgl1-mesa-dev \
             libx11-dev libxext-dev libxcursor-dev libxkbcommon-dev libxkbfile-dev \
             libxrandr-dev libxi-dev libxfixes-dev libxdamage-dev libxrender-dev \
-            libxinerama-dev libfuse2
+            libxinerama-dev libfuse2 \
+            libkrb5-dev libcjson-dev liburiparser-dev
           git clone --depth 1 --branch 3.32.2 https://github.com/FreeRDP/FreeRDP.git "$RUNNER_TEMP/freerdp"
           cmake -S "$RUNNER_TEMP/freerdp" -B "$RUNNER_TEMP/freerdp/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/deps" \
