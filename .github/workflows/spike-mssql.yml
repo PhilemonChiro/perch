@@ -1,0 +1,60 @@
+name: spike-mssql
+
+# Manual-only de-risk for the planned SQL Server (MSSQL) connector. Proves that
+# FreeTDS (db-lib) builds, links, and makes a real TDS connection + query
+# against a live SQL Server — the hard part of the feature — before any app or
+# UI work. Not wired into PR/release builds.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install FreeTDS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y freetds-dev freetds-bin g++
+
+      - name: Build the probe
+        run: |
+          set -euo pipefail
+          # FreeTDS headers/lib land in the default system paths on Ubuntu.
+          g++ -std=c++17 spike/sql_probe.cpp -lsybdb -o /tmp/sql_probe
+          ldd /tmp/sql_probe | grep -i sybdb
+
+      - name: Start a throwaway SQL Server
+        run: |
+          set -euo pipefail
+          # Generate an ephemeral SA password at runtime (meets SQL Server
+          # complexity) so no secret is committed to the workflow.
+          PW="$(openssl rand -base64 18)aA1!"
+          echo "::add-mask::$PW"
+          echo "SQL_PASS=$PW" >> "$GITHUB_ENV"
+          docker run -d --name mssql \
+            -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$PW" \
+            -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+
+      - name: Wait for SQL Server to accept connections
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if docker exec mssql /opt/mssql-tools18/bin/sqlcmd \
+                 -S localhost -U sa -P "$SQL_PASS" -C -Q "SELECT 1" >/dev/null 2>&1; then
+              echo "SQL Server is up (after ${i}s)"; exit 0
+            fi
+            sleep 1
+          done
+          echo "SQL Server did not come up in time" >&2
+          docker logs mssql | tail -40
+          exit 1
+
+      - name: Run the probe
+        env:
+          SQL_HOST: localhost
+          SQL_PORT: "1433"
+          SQL_USER: sa
+          SQL_QUERY: "SELECT name, database_id FROM sys.databases ORDER BY database_id"
+        run: /tmp/sql_probe
