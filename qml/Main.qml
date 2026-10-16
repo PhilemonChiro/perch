@@ -91,6 +91,7 @@ ApplicationWindow {
             onNewHost: folderId => editor.openNew(folderId)
             onOpenPalette: palette.open()
             onManageCredentials: credManager.openManager()
+            onAddCredential: { credManager.openManager(); credManager.startAdd() }
             onCollapse: win.sidebarPinned = false
             onToast: (m, k) => win.toast(m, k)
         }

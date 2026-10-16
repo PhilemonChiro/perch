@@ -50,8 +50,18 @@ ComboBox {
         required property var modelData
         required property int index
         readonly property bool actionRow: cd.modelData.id === "__manage__" || cd.modelData.id === "__new__"
-        width: box.width - 12; x: 6; height: 34
+        // "New credential…" is the first action row: rule it off from the saved sets.
+        readonly property bool firstAction: cd.modelData.id === "__new__"
+        width: box.width - 12; x: 6; height: cd.firstAction ? 43 : 34
+        topPadding: cd.firstAction ? 9 : 0
         highlighted: box.highlightedIndex === index
+        // Separator between saved credentials and the action rows.
+        Rectangle {
+            visible: cd.firstAction
+            anchors { top: parent.top; left: parent.left; right: parent.right; leftMargin: 4; rightMargin: 4 }
+            height: 1
+            color: Theme.border
+        }
         contentItem: RowLayout {
             spacing: 9
             Icon {
@@ -64,7 +74,12 @@ ComboBox {
             Text { visible: cd.modelData.sub !== "" && cd.modelData.sub !== cd.modelData.label; Layout.fillWidth: true; text: cd.modelData.sub; color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily; elide: Text.ElideRight; horizontalAlignment: Text.AlignRight; rightPadding: 6 }
             Item { visible: cd.modelData.sub === "" || cd.modelData.sub === cd.modelData.label; Layout.fillWidth: true }
         }
-        background: Rectangle { radius: Theme.radiusSm; color: cd.highlighted ? Theme.surface3 : "transparent" }
+        background: Rectangle {
+            radius: Theme.radiusSm
+            color: cd.highlighted ? Theme.surface3 : "transparent"
+            anchors.fill: parent
+            anchors.topMargin: cd.firstAction ? 9 : 0
+        }
     }
 
     contentItem: Text {

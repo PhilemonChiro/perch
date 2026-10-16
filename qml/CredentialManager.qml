@@ -104,6 +104,7 @@ Popup {
                     font.weight: Font.DemiBold
                 }
                 Text {
+                    visible: !root.formView
                     text: qsTr("Reusable sign-ins. Passwords are stored in your system keychain.")
                     color: Theme.textDim
                     font.pixelSize: Theme.fontSm
@@ -165,12 +166,25 @@ Popup {
                                 elide: Text.ElideRight; width: parent.width
                             }
                         }
-                        IconButton {
-                            iconName: "trash"; iconSize: 14; danger: true
+                        // Chevron signals the row opens to edit; delete takes its
+                        // place on hover, in a fixed slot so the row never shifts.
+                        Item {
+                            Layout.preferredWidth: 28; Layout.fillHeight: true
                             Layout.rightMargin: 8
-                            opacity: row.hovered ? 1 : 0
-                            tip: qsTr("Delete")
-                            onClicked: { CredentialStore.remove(row.modelData.id); root.refresh() }
+                            Icon {
+                                anchors.centerIn: parent
+                                name: "chevron"; size: 13; color: Theme.textFaint
+                                opacity: row.hovered ? 0 : 1
+                                Behavior on opacity { NumberAnimation { duration: Theme.fast } }
+                            }
+                            IconButton {
+                                anchors.centerIn: parent
+                                iconName: "trash"; iconSize: 14; danger: true
+                                opacity: row.hovered ? 1 : 0
+                                visible: row.hovered
+                                tip: qsTr("Delete")
+                                onClicked: { CredentialStore.remove(row.modelData.id); root.refresh() }
+                            }
                         }
                     }
                 }
@@ -181,6 +195,12 @@ Popup {
                     width: parent.width - 48
                     spacing: 10
                     visible: list.count === 0
+                    Rectangle {
+                        width: 52; height: 52; radius: 16
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        color: Theme.accentSoft
+                        Icon { anchors.centerIn: parent; name: "lock"; size: 22; color: Theme.accent }
+                    }
                     Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: qsTr("No saved credentials yet"); color: Theme.text; font.pixelSize: Theme.fontMd; font.weight: Font.DemiBold }
                     Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; text: qsTr("Save a sign-in once and reuse it across connections."); color: Theme.textDim; font.pixelSize: Theme.fontSm }
                 }
@@ -209,6 +229,19 @@ Popup {
             Field { id: passF; Layout.fillWidth: true; label: qsTr("Password"); password: true
                 placeholder: root.editingId === "new" ? qsTr("Optional — you’ll be asked when connecting") : qsTr("Leave blank to keep the saved one")
                 onAccepted: root.saveForm() }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: -6
+                spacing: 7
+                Icon { name: "lock"; size: 13; color: Theme.textFaint }
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("Stored in your system keychain, never in the app.")
+                    color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                    wrapMode: Text.WordWrap
+                }
+            }
 
             Item { Layout.fillHeight: true }
             RowLayout {

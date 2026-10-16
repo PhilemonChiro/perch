@@ -12,6 +12,7 @@ Rectangle {
     signal newHost(string folderId)
     signal openPalette()
     signal manageCredentials()
+    signal addCredential()
     signal collapse()
     signal toast(string message, string kind)
 
@@ -215,10 +216,77 @@ Rectangle {
             }
         }
 
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12; Layout.rightMargin: 12
+            height: 1
+            color: Theme.border
+        }
+
+        // Section header
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 10
+            Layout.topMargin: 12
+            spacing: 2
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("CREDENTIALS")
+                color: Theme.textFaint
+                font.pixelSize: Theme.fontXs
+                font.weight: Font.DemiBold
+                font.letterSpacing: 0.8
+            }
+            IconButton {
+                iconName: "plus"; iconSize: 15; implicitWidth: 26; implicitHeight: 26
+                tip: qsTr("New credential")
+                onClicked: root.addCredential()
+            }
+        }
+
+        // Credentials — reusable sign-ins kept in the system keychain.
+        AbstractButton {
+            id: credBtn
+            Layout.fillWidth: true
+            Layout.leftMargin: 12; Layout.rightMargin: 12; Layout.topMargin: 6
+            implicitHeight: 40
+            hoverEnabled: true
+            focusPolicy: Qt.NoFocus
+            onClicked: root.manageCredentials()
+            scale: pressed ? 0.98 : 1
+            Behavior on scale { NumberAnimation { duration: Theme.fast } }
+            background: Rectangle {
+                radius: Theme.radius
+                color: credBtn.hovered ? Theme.surface2 : "transparent"
+                border.color: credBtn.hovered ? Theme.border : "transparent"
+                Behavior on color { ColorAnimation { duration: Theme.fast } }
+            }
+            contentItem: RowLayout {
+                spacing: 10
+                Rectangle {
+                    Layout.leftMargin: 6
+                    width: 28; height: 28; radius: 9
+                    color: Theme.accentSoft
+                    Icon { anchors.centerIn: parent; name: "lock"; size: 14; color: Theme.accent }
+                }
+                Column {
+                    Layout.fillWidth: true
+                    spacing: 0
+                    Text { text: qsTr("Credentials manager"); color: Theme.text; font.pixelSize: Theme.fontMd; font.weight: Font.Medium }
+                    Text {
+                        text: CredentialStore.count === 1 ? qsTr("1 saved sign-in") : qsTr("%1 saved sign-ins").arg(CredentialStore.count)
+                        color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                    }
+                }
+                Icon { Layout.rightMargin: 10; name: "chevron"; size: 12; color: Theme.textFaint }
+            }
+        }
+
         // Footer
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 12
+            Layout.leftMargin: 12; Layout.rightMargin: 12
+            Layout.topMargin: 8; Layout.bottomMargin: 12
             spacing: 6
             Text {
                 Layout.fillWidth: true
@@ -226,11 +294,6 @@ Rectangle {
                 text: ConnectionStore.hostCount === 1 ? qsTr("1 host") : qsTr("%1 hosts").arg(ConnectionStore.hostCount)
                 color: Theme.textFaint
                 font.pixelSize: Theme.fontXs
-            }
-            IconButton {
-                iconName: "lock"; iconSize: 14; implicitWidth: 26; implicitHeight: 26
-                tip: qsTr("Credentials")
-                onClicked: root.manageCredentials()
             }
             AbstractButton {
                 id: themeBtn
