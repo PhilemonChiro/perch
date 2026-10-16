@@ -64,6 +64,11 @@ int main(int argc, char* argv[])
         });
     }
 
+    // Dev aid: RELAY_SQL=[user@]host[:port][/db] opens a SQL Server console tab.
+    if (const QString t = qEnvironmentVariable("RELAY_SQL"); !t.isEmpty()) {
+        QTimer::singleShot(300, [t] { SessionManager::create(nullptr, nullptr)->quickConnectDatabase(t); });
+    }
+
     // Dev aid: RELAY_SCREENSHOT=out.png saves the window after startup and exits.
     if (const QString shot = qEnvironmentVariable("RELAY_SCREENSHOT"); !shot.isEmpty()) {
         const int delay = qEnvironmentVariableIntValue("RELAY_SCREENSHOT_DELAY");

@@ -320,29 +320,100 @@ Item {
 
                 // Results.
                 Item {
+                    id: resultsArea
                     Layout.fillWidth: true
                     Layout.fillHeight: true
 
-                    ColumnLayout {
-                        anchors.fill: parent
-                        spacing: 0
-                        visible: sessionObj && sessionObj.result.columns.length > 0
+                    readonly property var res: sessionObj ? sessionObj.result : null
+                    readonly property bool hasGrid: res && res.columns.length > 0
+                    property int selRow: -1
+                    property int selCol: -1
 
+                    function copySel() {
+                        if (!res || selRow < 0 || selCol < 0) return
+                        Clipboard.copy(res.cellText(selRow, selCol))
+                        page.toast(qsTr("Cell copied"), "info")
+                    }
+                    function copyRow() {
+                        if (!res || selRow < 0) return
+                        Clipboard.copy(res.rowText(selRow))
+                        page.toast(qsTr("Row copied"), "info")
+                    }
+
+                    Connections {
+                        target: resultsArea.res
+                        function onResetted() { resultsArea.selRow = -1; resultsArea.selCol = -1; table.forceLayout() }
+                        function onSortChanged() { table.forceLayout() }
+                    }
+
+                    GridLayout {
+                        anchors.fill: parent
+                        columns: 2
+                        rowSpacing: 0
+                        columnSpacing: 0
+                        visible: resultsArea.hasGrid
+
+                        // Top-left corner filler, aligned with the two headers.
+                        Rectangle {
+                            Layout.preferredWidth: vhv.width
+                            Layout.preferredHeight: 30
+                            color: Theme.surface2
+                            border.color: Theme.border
+                        }
                         HorizontalHeaderView {
                             id: hhv
                             Layout.fillWidth: true
                             syncView: table
                             clip: true
                             delegate: Rectangle {
+                                id: hcell
+                                required property int index
+                                required property string display
                                 implicitHeight: 30
-                                color: Theme.surface2
+                                readonly property bool sorted: resultsArea.res && resultsArea.res.sortColumn === index
+                                color: hhvHover.hovered ? Theme.surface3 : Theme.surface2
                                 border.color: Theme.border
+                                Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                HoverHandler { id: hhvHover }
+                                TapHandler { onTapped: if (resultsArea.res) resultsArea.res.sortByColumn(hcell.index) }
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 6
+                                    spacing: 4
+                                    Text {
+                                        Layout.fillWidth: true
+                                        verticalAlignment: Text.AlignVCenter
+                                        text: hcell.display
+                                        color: hcell.sorted ? Theme.text : Theme.textDim
+                                        font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        visible: hcell.sorted
+                                        text: resultsArea.res && resultsArea.res.sortAscending ? "▲" : "▼"
+                                        color: Theme.accent; font.pixelSize: 8
+                                    }
+                                }
+                            }
+                        }
+                        // Row-number gutter.
+                        VerticalHeaderView {
+                            id: vhv
+                            Layout.fillHeight: true
+                            Layout.preferredWidth: 52
+                            syncView: table
+                            clip: true
+                            delegate: Rectangle {
+                                required property int index
+                                implicitWidth: 52
+                                color: Theme.surface2
+                                Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.border }
                                 Text {
-                                    anchors.fill: parent; anchors.leftMargin: 10
-                                    verticalAlignment: Text.AlignVCenter
-                                    text: display
-                                    color: Theme.textDim; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
-                                    elide: Text.ElideRight
+                                    anchors.fill: parent; anchors.rightMargin: 8
+                                    horizontalAlignment: Text.AlignRight; verticalAlignment: Text.AlignVCenter
+                                    text: index + 1
+                                    color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily
                                 }
                             }
                         }
@@ -351,23 +422,37 @@ Item {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             clip: true
-                            model: sessionObj ? sessionObj.result : null
+                            model: resultsArea.res
                             boundsBehavior: Flickable.StopAtBounds
-                            columnWidthProvider: function (c) { return 180 }
+                            columnWidthProvider: function (c) {
+                                const w = resultsArea.res ? resultsArea.res.columnWidths[c] : 0
+                                return w ? w : 160
+                            }
                             rowHeightProvider: function (r) { return 28 }
                             ScrollBar.vertical: ScrollBar {}
                             ScrollBar.horizontal: ScrollBar {}
                             delegate: Rectangle {
-                                implicitWidth: 180
+                                id: cell
+                                required property int row
+                                required property int column
+                                required property string display
+                                required property bool isNull
+                                readonly property bool selected: resultsArea.selRow === row && resultsArea.selCol === column
+                                implicitWidth: 160
                                 implicitHeight: 28
-                                color: (row % 2) ? Theme.bg : Theme.surface
+                                color: selected ? Theme.accentSoft : (row % 2 ? Theme.bg : Theme.surface)
                                 Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border; opacity: 0.5 }
+                                Rectangle { visible: cell.selected; anchors.fill: parent; color: "transparent"; border.color: Theme.accent; border.width: 1 }
+                                TapHandler {
+                                    onTapped: { resultsArea.selRow = cell.row; resultsArea.selCol = cell.column }
+                                    onDoubleTapped: { resultsArea.selRow = cell.row; resultsArea.selCol = cell.column; resultsArea.copySel() }
+                                }
                                 Text {
                                     anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 6
                                     verticalAlignment: Text.AlignVCenter
-                                    text: isNull ? "NULL" : display
-                                    color: isNull ? Theme.textFaint : Theme.text
-                                    font.italic: isNull === true
+                                    text: cell.isNull ? "NULL" : cell.display
+                                    color: cell.isNull ? Theme.textFaint : Theme.text
+                                    font.italic: cell.isNull === true
                                     font.family: Theme.monoFamily; font.pixelSize: Theme.fontSm
                                     elide: Text.ElideRight
                                 }
@@ -378,7 +463,7 @@ Item {
                     Column {
                         anchors.centerIn: parent
                         spacing: 10
-                        visible: !(sessionObj && sessionObj.result.columns.length > 0)
+                        visible: !resultsArea.hasGrid
                         Icon {
                             anchors.horizontalCenter: parent.horizontalCenter
                             name: sessionObj && sessionObj.errorText ? "alert" : "database"
@@ -425,4 +510,9 @@ Item {
     Shortcut { sequence: "Meta+Return"; enabled: page.active; onActivated: page.run() }
     Shortcut { sequence: "Ctrl+Enter"; enabled: page.active; onActivated: page.run() }
     Shortcut { sequence: "Meta+Enter"; enabled: page.active; onActivated: page.run() }
+    // Copy the selected cell; Shift adds the whole row. Only when a cell is
+    // selected, so the editor keeps normal copy while it has focus.
+    Shortcut { sequences: [StandardKey.Copy]; enabled: page.active && resultsArea.selRow >= 0; onActivated: resultsArea.copySel() }
+    Shortcut { sequence: "Ctrl+Shift+C"; enabled: page.active && resultsArea.selRow >= 0; onActivated: resultsArea.copyRow() }
+    Shortcut { sequence: "Meta+Shift+C"; enabled: page.active && resultsArea.selRow >= 0; onActivated: resultsArea.copyRow() }
 }

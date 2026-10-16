@@ -215,7 +215,7 @@ Rectangle {
                 iconName: "folder"; iconSize: 15
                 enabled: root.sessionLive
                 opacity: enabled ? 1 : 0.4
-                readonly property string shared: root.activeSession ? root.activeSession.sharedFolder : ""
+                readonly property string shared: root.activeIsRdp ? root.activeSession.sharedFolder : ""
                 checked: shared !== ""
                 tip: shared !== "" ? qsTr("Sharing “%1” — click to change").arg(root.folderName(shared))
                                    : qsTr("Share a folder into this session")

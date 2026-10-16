@@ -46,6 +46,7 @@ qt_add_qml_module(relay
         src/RdpSession.h src/RdpSession.cpp
         src/RdpView.h src/RdpView.cpp
         src/SqlResultModel.h
+        src/Clipboard.h
         src/SqlSession.h src/SqlSession.cpp
     QML_FILES
         qml/Main.qml
