@@ -197,7 +197,6 @@ jobs:
           # NLA needs OpenSSL's legacy provider (MD4/RC4); ship and activate it.
           bash .github/scripts/bundle-openssl-legacy-win.sh dist
           cp windows/perch.ico dist/ 2>/dev/null || true
-          ( cd dist && 7z a ../Perch-Windows-x64.zip . >/dev/null )
           # One-click installer via Inno Setup (preinstalled on the runner).
           VERSION="${GITHUB_REF_NAME#v}"
           ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
@@ -248,7 +247,6 @@ jobs:
         with:
           files: |
             Perch-macOS.dmg
-            Perch-Windows-x64.zip
             Perch-Setup-x64.exe
             Perch-x86_64.AppImage
           generate_release_notes: true
