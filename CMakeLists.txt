@@ -10,6 +10,21 @@ find_package(WinPR 3 REQUIRED)
 find_package(FreeRDP 3 REQUIRED)
 find_package(FreeRDP-Client 3 REQUIRED)
 
+# FreeTDS (db-lib) powers the SQL Server connector. It ships no upstream CMake
+# package, so locate the header and the sybdb library directly, with Homebrew /
+# apt / vcpkg hints.
+find_path(FREETDS_INCLUDE_DIR NAMES sybdb.h
+    HINTS /opt/homebrew/opt/freetds/include /usr/local/opt/freetds/include
+          /usr/include /usr/local/include
+          $ENV{VCPKG_INSTALLATION_ROOT}/installed/x64-windows/include)
+find_library(FREETDS_LIBRARY NAMES sybdb
+    HINTS /opt/homebrew/opt/freetds/lib /usr/local/opt/freetds/lib
+          /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+          $ENV{VCPKG_INSTALLATION_ROOT}/installed/x64-windows/lib)
+if(NOT FREETDS_INCLUDE_DIR OR NOT FREETDS_LIBRARY)
+    message(FATAL_ERROR "FreeTDS (sybdb.h / libsybdb) not found; install freetds")
+endif()
+
 qt_standard_project_setup(REQUIRES 6.9)
 
 qt_add_executable(relay WIN32 MACOSX_BUNDLE
@@ -30,6 +45,9 @@ qt_add_qml_module(relay
         src/SessionManager.h src/SessionManager.cpp
         src/RdpSession.h src/RdpSession.cpp
         src/RdpView.h src/RdpView.cpp
+        src/SqlResultModel.h
+        src/SqlSession.h src/SqlSession.cpp
+        src/DbManager.h src/DbManager.cpp
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
@@ -41,6 +59,7 @@ qt_add_qml_module(relay
         qml/ConnectionEditor.qml
         qml/CredentialManager.qml
         qml/CredentialPicker.qml
+        qml/DbConsole.qml
         qml/components/Icon.qml
         qml/components/IconButton.qml
         qml/components/PrimaryButton.qml
@@ -54,7 +73,7 @@ qt_add_qml_module(relay
     RESOURCES ${RELAY_ICONS}
 )
 
-target_include_directories(relay PRIVATE src)
+target_include_directories(relay PRIVATE src ${FREETDS_INCLUDE_DIR})
 
 # WinPR/FreeRDP headers pull in <windows.h>; NOMINMAX keeps its min/max macros
 # from clobbering std::min/std::max. WIN32_LEAN_AND_MEAN trims the include.
@@ -66,6 +85,7 @@ target_link_libraries(relay PRIVATE
     Qt6::Gui Qt6::Quick Qt6::QuickControls2
     Qt6Keychain::Qt6Keychain
     winpr freerdp freerdp-client
+    ${FREETDS_LIBRARY}
 )
 
 # The output binary is "Perch". (The QML module dir is "Relay", so there is no

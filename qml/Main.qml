@@ -25,6 +25,25 @@ ApplicationWindow {
 
     function toast(msg, kind) { toaster.show(msg, kind) }
     function closeTab(i) { if (i >= 0) SessionManager.close(i) }
+
+    // A quick-connect string beginning mssql:// (or sql://) opens a SQL Server
+    // console window instead of an RDP session.
+    function isDbTarget(text) { return /^\s*(mssql|sql):\/\//i.test(text) }
+    function openDb(text) {
+        const s = DbManager.open(text)
+        if (!s) return false
+        dbConsoleComp.createObject(win, { session: s }).show()
+        return true
+    }
+    // Routes a quick-connect string to either the DB console or an RDP session.
+    function quickConnect(text) {
+        if (isDbTarget(text)) {
+            if (!openDb(text)) win.toast(qsTr("That doesn’t look like a database address"), "error")
+            return
+        }
+        if (SessionManager.quickConnect(text) < 0)
+            win.toast(qsTr("That doesn’t look like a host address"), "error")
+    }
     function toggleFullscreen() {
         win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
     }
@@ -133,9 +152,7 @@ ApplicationWindow {
                     Behavior on opacity { NumberAnimation { duration: Theme.normal } }
                     Behavior on scale { NumberAnimation { duration: Theme.slow; easing.type: Theme.easing } }
                     onConnectHost: id => SessionManager.openHost(id)
-                    onQuickConnect: text => {
-                        if (SessionManager.quickConnect(text) < 0) win.toast(qsTr("That doesn’t look like a host address"), "error")
-                    }
+                    onQuickConnect: text => win.quickConnect(text)
                     onNewHost: editor.openNew("")
                     onOpenPalette: palette.open()
                 }
@@ -171,9 +188,7 @@ ApplicationWindow {
         sessionActive: win.current >= 0
         onSendCad: { const s = win.current >= 0 ? SessionManager.at(win.current) : null; if (s) s.sendCtrlAltDel() }
         onConnectHost: id => SessionManager.openHost(id)
-        onQuickConnect: text => {
-            if (SessionManager.quickConnect(text) < 0) win.toast(qsTr("That doesn’t look like a host address"), "error")
-        }
+        onQuickConnect: text => win.quickConnect(text)
         onNewHost: editor.openNew("")
         onNewFolder: { ConnectionStore.addFolder(qsTr("New folder"), ""); win.sidebarPinned = true }
         onGoHome: win.current = -1
@@ -195,6 +210,9 @@ ApplicationWindow {
     }
 
     CredentialManager { id: credManager }
+
+    // One SQL console window is spawned per database connection.
+    Component { id: dbConsoleComp; DbConsole {} }
 
     Toast {
         id: toaster
