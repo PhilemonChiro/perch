@@ -213,7 +213,7 @@ Item {
                 contentItem: Text { leftPadding: 4; text: cmi.text; color: cmi.danger ? Theme.danger : Theme.text
                     font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter }
                 background: Rectangle { radius: Theme.radiusSm
-                    color: cmi.highlighted ? (cmi.danger ? Theme.dangerSoft : Theme.surface3) : "transparent" }
+                    color: cmi.highlighted ? (cmi.danger ? Theme.dangerSoft : Theme.hover) : "transparent" }
             }
             Action { text: qsTr("Connect"); onTriggered: if (card.data_) root.connectHost(card.data_.id) }
             Action { text: qsTr("Edit"); onTriggered: if (card.data_) root.editHost(card.data_.id) }

@@ -12,6 +12,8 @@ Item {
 
     property var sessionObj
     property bool active: false
+    // Editor pane height — adjustable by dragging the divider below it.
+    property real editorHeight: 170
     signal closeRequested()
     signal toast(string message, string kind)
 
@@ -40,11 +42,78 @@ Item {
     function saveQuery(name) {
         const sql = page.sqlToSave
         if (sql.trim() === "" || serverKey === "") return false
-        const nm = (name && name.trim() !== "") ? name.trim()
-                 : sql.replace(/\s+/g, " ").trim().slice(0, 48)
+        const nm = (name && name.trim() !== "") ? name.trim() : page.summarizeQuery(sql)
         QueryStore.save(serverKey, nm, sql)
         page.toast(qsTr("Query saved"), "info")
         return true
+    }
+
+    // Builds a short, human-readable name from SQL — no network, fully local.
+    // Handles the common SELECT/UPDATE/INSERT/DELETE/DDL/EXEC shapes and falls
+    // back to a structural label (joins/group/CTE/multi-statement) for the rest.
+    function summarizeQuery(sqlRaw) {
+        if (!sqlRaw) return ""
+        let s = sqlRaw.replace(/\/\*[\s\S]*?\*\//g, " ")
+                      .replace(/--[^\n]*/g, " ")
+                      .replace(/\s+/g, " ").trim()
+        if (s === "") return ""
+        const parts = s.split(";").map(x => x.trim()).filter(x => x.length > 0)
+        const extra = parts.length > 1 ? " (+" + (parts.length - 1) + " more)" : ""
+        s = parts[0]
+        const T = "([\\[\\]\\w.#@$\"]+)"
+        const lastName = (t) => {
+            if (!t) return ""
+            t = t.replace(/[\[\]"]/g, "")
+            const seg = t.split(".")
+            return seg[seg.length - 1]
+        }
+        const tableAfter = (kw) => {
+            const m = s.match(new RegExp("\\b" + kw + "\\s+" + T, "i"))
+            return m ? lastName(m[1]) : ""
+        }
+        const whereCol = () => {
+            const w = s.match(/\bwhere\s+(?:cast\s*\(\s*)?\[?(\w+)\]?/i)
+            return w ? w[1] : ""
+        }
+        const joins = (s.match(/\bjoin\b/gi) || []).length
+        const grouped = /\bgroup\s+by\s+\[?(\w+)\]?/i.exec(s)
+
+        let name = ""
+        if (/^\s*select\b/i.test(s)) {
+            const t = tableAfter("from")
+            const col = whereCol()
+            if (!t) name = qsTr("Query")
+            else if (grouped) name = qsTr("%1 grouped by %2").arg(t).arg(grouped[1])
+            else if (joins > 0) name = qsTr("%1 + %n join(s)", "", joins).arg(t)
+            else if (col) name = qsTr("Find %1 by %2").arg(t).arg(col)
+            else {
+                const top = s.match(/\btop\s+(\d+)/i)
+                name = top ? qsTr("Top %1 %2").arg(top[1]).arg(t) : t
+            }
+        } else if (/^\s*update\b/i.test(s)) {
+            const t = tableAfter("update"); const col = whereCol()
+            name = col ? qsTr("Update %1 by %2").arg(t || "table").arg(col)
+                       : qsTr("Update %1").arg(t || "table")
+        } else if (/^\s*insert\b/i.test(s)) {
+            name = qsTr("Insert into %1").arg(tableAfter("into") || "table")
+        } else if (/^\s*delete\b/i.test(s)) {
+            const t = tableAfter("from"); const col = whereCol()
+            name = col ? qsTr("Delete from %1 by %2").arg(t || "table").arg(col)
+                       : qsTr("Delete from %1").arg(t || "table")
+        } else if (/^\s*(create|alter|drop)\s+(table|view|proc|procedure|function|index)\b/i.test(s)) {
+            const mm = s.match(/^\s*(create|alter|drop)\s+(?:table|view|proc|procedure|function|index)\s+(?:if\s+(?:not\s+)?exists\s+)?([\[\]\w.#@$"]+)/i)
+            const verb = mm ? mm[1][0].toUpperCase() + mm[1].slice(1).toLowerCase() : qsTr("Change")
+            name = verb + " " + (mm ? lastName(mm[2]) : qsTr("object"))
+        } else if (/^\s*exec(ute)?\b/i.test(s)) {
+            const mm = s.match(/^\s*exec(?:ute)?\s+([\[\]\w.#@$"]+)/i)
+            name = qsTr("Run %1").arg(mm ? lastName(mm[1]) : qsTr("procedure"))
+        } else if (/^\s*with\b/i.test(s)) {
+            name = qsTr("CTE query")
+        } else {
+            name = s.slice(0, 48)
+        }
+        name += extra
+        return name.length > 60 ? name.slice(0, 60) : name
     }
     function loadQuery(sql) { editor.text = sql; editor.forceActiveFocus() }
     function runSaved(sql) { editor.text = sql; if (sessionObj) sessionObj.execute(sql) }
@@ -260,23 +329,38 @@ Item {
                                 model: dbPop.filtered
                                 boundsBehavior: Flickable.StopAtBounds
                                 ScrollBar.vertical: ScrollBar {}
+                                property int hoveredIndex: -1
+                                HoverHandler { onHoveredChanged: if (!hovered) dbList.hoveredIndex = -1 }
                                 delegate: ItemDelegate {
+                                    id: dbd
+                                    required property int index
                                     required property string modelData
                                     width: dbList.width
                                     height: 30
                                     readonly property bool current: sessionObj && sessionObj.currentDatabase === modelData
+                                    readonly property bool hov: dbList.hoveredIndex === dbd.index
+                                    HoverHandler {
+                                        onHoveredChanged: {
+                                            if (hovered) dbList.hoveredIndex = dbd.index
+                                            else if (dbList.hoveredIndex === dbd.index) dbList.hoveredIndex = -1
+                                        }
+                                    }
                                     contentItem: RowLayout {
                                         spacing: 6
                                         Text {
                                             Layout.fillWidth: true; Layout.leftMargin: 6
                                             text: modelData
-                                            color: current ? Theme.sqlTag : Theme.text
+                                            color: dbd.current ? Theme.sqlTag : Theme.text
                                             font.pixelSize: Theme.fontSm
-                                            font.weight: current ? Font.DemiBold : Font.Normal
+                                            font.weight: dbd.current ? Font.DemiBold : Font.Normal
                                             elide: Text.ElideRight
                                         }
                                     }
-                                    background: Rectangle { radius: Theme.radiusSm; color: hovered ? Theme.surface3 : "transparent" }
+                                    background: Rectangle {
+                                        radius: Theme.radiusSm
+                                        color: dbd.current ? Theme.accentSoft : (dbd.hov ? Theme.hover : "transparent")
+                                        Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                    }
                                     onClicked: { sessionObj.useDatabase(modelData); dbPop.close() }
                                 }
                                 Text {
@@ -390,18 +474,27 @@ Item {
                         model: parent.filteredTables
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: ScrollBar {}
+                        property int hoveredIndex: -1
+                        HoverHandler { onHoveredChanged: if (!hovered) tablesList.hoveredIndex = -1 }
                         delegate: ItemDelegate {
+                            id: tbd
                             required property int index
                             required property string modelData
                             width: tablesList.width
                             height: 30
+                            HoverHandler {
+                                onHoveredChanged: {
+                                    if (hovered) tablesList.hoveredIndex = tbd.index
+                                    else if (tablesList.hoveredIndex === tbd.index) tablesList.hoveredIndex = -1
+                                }
+                            }
                             background: Rectangle {
-                                color: hovered ? Theme.surface2 : "transparent"
+                                color: tablesList.hoveredIndex === tbd.index ? Theme.hover : "transparent"
                                 Behavior on color { ColorAnimation { duration: Theme.fast } }
                             }
                             contentItem: RowLayout {
                                 spacing: 8
-                                Icon { Layout.leftMargin: 14; name: "database"; size: 12; color: Theme.textFaint }
+                                Icon { Layout.leftMargin: 14; name: "database"; size: 14; color: Theme.sqlTag; opacity: 0.85 }
                                 Text {
                                     Layout.fillWidth: true
                                     text: modelData
@@ -423,9 +516,8 @@ Item {
                 // Editor.
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 170
+                    Layout.preferredHeight: page.editorHeight
                     color: Theme.surface
-                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
                     ScrollView {
                         anchors.fill: parent
                         anchors.margins: 10
@@ -474,14 +566,16 @@ Item {
                             enabled: page.sqlToSave.trim() !== "" && page.serverKey !== ""
                             opacity: enabled ? 1 : 0.5
                             onClicked: {
-                                saveNameField.text = page.sqlToSave.replace(/\s+/g, " ").trim().slice(0, 48)
+                                saveNameField.text = page.summarizeQuery(page.sqlToSave)
                                 savePop.open(); saveNameField.selectAll(); saveNameField.forceActiveFocus()
                             }
 
                             Popup {
                                 id: savePop
                                 y: -implicitHeight - 6
-                                x: 0
+                                // Right-align to the button so the 320px card opens
+                                // leftward and never spills past the window edge.
+                                x: saveBtn.width - width
                                 width: 320
                                 padding: 12
                                 background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
@@ -668,14 +762,27 @@ Item {
                                         boundsBehavior: Flickable.StopAtBounds
                                         ScrollBar.vertical: ScrollBar {}
                                         spacing: 2
+                                        property int hoveredIndex: -1
+                                        HoverHandler { onHoveredChanged: if (!hovered) savedList.hoveredIndex = -1 }
                                         delegate: ItemDelegate {
                                             id: sq
+                                            required property int index
                                             required property var modelData
                                             width: savedList.width
                                             height: 50
-                                            hoverEnabled: true
+                                            readonly property bool hov: savedList.hoveredIndex === sq.index
+                                            HoverHandler {
+                                                onHoveredChanged: {
+                                                    if (hovered) savedList.hoveredIndex = sq.index
+                                                    else if (savedList.hoveredIndex === sq.index) savedList.hoveredIndex = -1
+                                                }
+                                            }
                                             onClicked: { page.loadQuery(sq.modelData.sql); savedPop.close() }
-                                            background: Rectangle { radius: Theme.radiusSm; color: sq.hovered ? Theme.surface3 : "transparent" }
+                                            background: Rectangle {
+                                                radius: Theme.radiusSm
+                                                color: sq.hov ? Theme.hover : "transparent"
+                                                Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                            }
                                             contentItem: RowLayout {
                                                 spacing: 6
                                                 ColumnLayout {
@@ -692,7 +799,7 @@ Item {
                                                             font.weight: Font.DemiBold; elide: Text.ElideRight
                                                         }
                                                         Text {
-                                                            visible: !sq.hovered
+                                                            visible: !sq.hov
                                                             text: page.fmtAgo(sq.modelData.updated)
                                                             color: Theme.textFaint; font.pixelSize: Theme.fontXs
                                                         }
@@ -708,7 +815,7 @@ Item {
                                                 Row {
                                                     Layout.rightMargin: 6
                                                     spacing: 2
-                                                    visible: sq.hovered
+                                                    visible: sq.hov
                                                     AbstractButton {
                                                         width: 26; height: 26
                                                         hoverEnabled: true
@@ -750,6 +857,58 @@ Item {
                             leftPadding: 14; rightPadding: 14
                             enabled: !page.busy
                             onClicked: page.run()
+                        }
+                    }
+                }
+
+                // Draggable divider — resize the editor vs the results area.
+                Item {
+                    id: splitter
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 11
+                    readonly property bool active: splitHover.hovered || splitDrag.pressed
+                    // The divider line, a touch bolder on the active side.
+                    Rectangle {
+                        anchors.top: parent.top; width: parent.width; height: 1
+                        color: splitter.active ? Theme.borderStrong : Theme.border
+                    }
+                    Rectangle {
+                        anchors.bottom: parent.bottom; width: parent.width; height: 1
+                        color: Theme.border; opacity: 0.6
+                    }
+                    // Always-visible grab handle: a pill with three dots.
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 46; height: 11; radius: 5.5
+                        color: splitter.active ? Theme.accentSoft : Theme.surface2
+                        border.color: splitter.active ? Theme.accent : Theme.borderStrong
+                        Behavior on color { ColorAnimation { duration: Theme.fast } }
+                        Behavior on border.color { ColorAnimation { duration: Theme.fast } }
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 3
+                            Repeater {
+                                model: 3
+                                delegate: Rectangle {
+                                    width: 3; height: 3; radius: 1.5
+                                    color: splitter.active ? Theme.accent : Theme.textFaint
+                                    Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                }
+                            }
+                        }
+                    }
+                    HoverHandler { id: splitHover; cursorShape: Qt.SplitVCursor }
+                    MouseArea {
+                        id: splitDrag
+                        anchors.fill: parent
+                        anchors.topMargin: -3; anchors.bottomMargin: -3
+                        cursorShape: Qt.SplitVCursor
+                        property real pressY: 0
+                        property real pressH: 0
+                        onPressed: (m) => { pressY = mapToItem(page, m.x, m.y).y; pressH = page.editorHeight }
+                        onPositionChanged: (m) => {
+                            const dy = mapToItem(page, m.x, m.y).y - pressY
+                            page.editorHeight = Math.max(90, Math.min(page.height - 220, pressH + dy))
                         }
                     }
                 }

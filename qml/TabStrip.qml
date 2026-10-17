@@ -55,7 +55,7 @@ Rectangle {
             implicitHeight: 30
             readonly property bool danger: text === qsTr("Unmount folder")
             contentItem: Text { leftPadding: 4; text: tmi.text; color: tmi.danger ? Theme.danger : Theme.text; font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter }
-            background: Rectangle { radius: Theme.radiusSm; color: tmi.highlighted ? (tmi.danger ? Theme.dangerSoft : Theme.surface3) : "transparent" }
+            background: Rectangle { radius: Theme.radiusSm; color: tmi.highlighted ? (tmi.danger ? Theme.dangerSoft : Theme.hover) : "transparent" }
         }
         Action { text: qsTr("Change folder…"); onTriggered: tsFolderDialog.open() }
         MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: Theme.border } }

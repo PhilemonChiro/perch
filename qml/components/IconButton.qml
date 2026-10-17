@@ -20,11 +20,12 @@ AbstractButton {
     scale: pressed ? 0.88 : 1
     Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.OutBack; easing.overshoot: 3 } }
 
+    // Hover is a clean chip; "active" (checked) keeps the chip and tints
+    // the icon with the accent — no washed blue box.
     background: Rectangle {
         radius: Theme.radiusSm + 2
         color: root.danger && root.hovered ? Theme.dangerSoft
-             : root.checked ? Theme.accentSoft
-             : root.hovered ? Theme.surface3 : "transparent"
+             : (root.checked || root.hovered) ? Theme.hover : "transparent"
         Behavior on color { ColorAnimation { duration: Theme.fast } }
     }
     contentItem: Item {

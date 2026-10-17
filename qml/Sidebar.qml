@@ -392,7 +392,7 @@ Rectangle {
                 radius: Theme.radiusSm + 1
                 // `surface` is clearly elevated above the sidebar in both themes
                 // (in light, surface2/3 nearly match the sidebar and read as no hover).
-                color: row.pressed ? Theme.surface2 : row.rowHovered ? Theme.surface : "transparent"
+                color: row.pressed ? Theme.surface2 : row.rowHovered ? Theme.hover : "transparent"
                 border.color: row.rowHovered ? Theme.border : "transparent"
                 Behavior on color { ColorAnimation { duration: Theme.fast } }
             }
@@ -528,7 +528,7 @@ Rectangle {
                 }
                 background: Rectangle {
                     radius: Theme.radiusSm
-                    color: mi.highlighted ? (mi.danger ? Theme.dangerSoft : Theme.surface3) : "transparent"
+                    color: mi.highlighted ? (mi.danger ? Theme.dangerSoft : Theme.hover) : "transparent"
                 }
             }
             Action { text: row.isFolder ? (row.expanded ? qsTr("Collapse") : qsTr("Expand")) : qsTr("Connect"); onTriggered: row.activated() }

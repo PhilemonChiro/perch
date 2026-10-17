@@ -108,7 +108,7 @@ Item {
                 leftPadding: 6; text: cmi.text; color: Theme.text
                 font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter
             }
-            background: Rectangle { radius: Theme.radiusSm; color: cmi.highlighted ? Theme.surface3 : "transparent" }
+            background: Rectangle { radius: Theme.radiusSm; color: cmi.highlighted ? Theme.hover : "transparent" }
         }
         Action { text: qsTr("Copy cell"); onTriggered: rg.copySel() }
         Action { text: qsTr("Copy row"); onTriggered: rg.copyRow() }
@@ -243,21 +243,36 @@ Item {
                                         model: colPop.cols
                                         boundsBehavior: Flickable.StopAtBounds
                                         ScrollBar.vertical: ScrollBar {}
+                                        property int hoveredIndex: -1
+                                        HoverHandler { onHoveredChanged: if (!hovered) colList.hoveredIndex = -1 }
                                         delegate: ItemDelegate {
+                                            id: cld
+                                            required property int index
                                             required property string modelData
                                             width: colList.width; height: 28
                                             readonly property bool current: rg.searchCol === modelData
+                                            readonly property bool hov: colList.hoveredIndex === cld.index
+                                            HoverHandler {
+                                                onHoveredChanged: {
+                                                    if (hovered) colList.hoveredIndex = cld.index
+                                                    else if (colList.hoveredIndex === cld.index) colList.hoveredIndex = -1
+                                                }
+                                            }
                                             contentItem: Text {
                                                 leftPadding: 6
-                                                text: modelData === "" ? qsTr("any column") : modelData
-                                                color: current ? Theme.accent : Theme.text
+                                                text: cld.modelData === "" ? qsTr("any column") : cld.modelData
+                                                color: cld.current ? Theme.accent : Theme.text
                                                 font.pixelSize: Theme.fontSm
-                                                font.family: modelData === "" ? Theme.fontFamily : Theme.monoFamily
-                                                font.italic: modelData === ""
+                                                font.family: cld.modelData === "" ? Theme.fontFamily : Theme.monoFamily
+                                                font.italic: cld.modelData === ""
                                                 verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
                                             }
-                                            background: Rectangle { radius: Theme.radiusSm; color: hovered ? Theme.surface3 : "transparent" }
-                                            onClicked: { rg.searchCol = modelData; colPop.close() }
+                                            background: Rectangle {
+                                                radius: Theme.radiusSm
+                                                color: cld.current ? Theme.accentSoft : (cld.hov ? Theme.hover : "transparent")
+                                                Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                            }
+                                            onClicked: { rg.searchCol = cld.modelData; colPop.close() }
                                         }
                                     }
                                 }
@@ -292,32 +307,38 @@ Item {
                     }
                 }
 
-                // "Exact match" toggle — ghost-button styling, accent when on.
-                Button {
-                    id: exactChip
-                    text: qsTr("Exact")
+                // "Exact match" as a labelled checkbox with a clear description.
+                AbstractButton {
+                    id: exactChk
+                    checkable: true
+                    checked: rg.exactMode
                     hoverEnabled: true
                     implicitHeight: 30
-                    leftPadding: 14; rightPadding: 14
-                    scale: pressed ? 0.97 : 1
-                    Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.OutBack; easing.overshoot: 2.5 } }
-                    onClicked: rg.exactMode = !rg.exactMode
-                    ToolTip.visible: hovered; ToolTip.delay: 450
-                    ToolTip.text: rg.exactMode ? qsTr("Matching the whole value")
-                                               : qsTr("Matching any part of the value")
-                    background: Rectangle {
-                        radius: Theme.radius
-                        color: rg.exactMode ? Theme.accentSoft : (exactChip.hovered ? Theme.surface3 : Theme.surface2)
-                        border.color: rg.exactMode ? Theme.accent : (exactChip.hovered ? Theme.borderStrong : Theme.border)
-                        Behavior on color { ColorAnimation { duration: Theme.fast } }
-                        Behavior on border.color { ColorAnimation { duration: Theme.fast } }
-                    }
-                    contentItem: Text {
-                        text: exactChip.text
-                        color: rg.exactMode ? Theme.accent : Theme.text
-                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontMd
-                        font.weight: rg.exactMode ? Font.DemiBold : Font.Medium
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                    onToggled: rg.exactMode = checked
+                    ToolTip.visible: hovered; ToolTip.delay: 400
+                    ToolTip.text: qsTr("On: match the whole value. Off: match any part of it.")
+                    contentItem: Row {
+                        spacing: 7
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 17; height: 17; radius: 5
+                            color: exactChk.checked ? Theme.accent : "transparent"
+                            border.width: exactChk.checked ? 0 : 1.5
+                            border.color: exactChk.hovered ? Theme.borderStrong : Theme.border
+                            Behavior on color { ColorAnimation { duration: Theme.fast } }
+                            Text {
+                                anchors.centerIn: parent
+                                text: "✓"; visible: exactChk.checked
+                                color: Theme.accentInk; font.pixelSize: 12; font.weight: Font.Bold
+                            }
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Exact match")
+                            color: exactChk.checked ? Theme.text : Theme.textDim
+                            font.pixelSize: Theme.fontSm
+                            font.weight: exactChk.checked ? Font.Medium : Font.Normal
+                        }
                     }
                 }
                 // Find / Filter — the app's primary button, for a consistent look.
@@ -394,7 +415,7 @@ Item {
                         required property int index
                         readonly property bool rowHover: rg.hoverRow === index
                         implicitWidth: 52
-                        color: rowHover ? Theme.surface3 : Theme.surface2
+                        color: rowHover ? Theme.accentFaint : Theme.surface2
                         Behavior on color { ColorAnimation { duration: Theme.fast } }
                         Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.border }
                         Text {
@@ -433,7 +454,7 @@ Item {
                         implicitWidth: 160
                         implicitHeight: 28
                         color: selected ? Theme.accentSoft
-                             : rowHover ? Theme.surface2
+                             : rowHover ? Theme.accentFaint
                              : (row % 2 ? Theme.bg : Theme.surface)
                         Behavior on color { ColorAnimation { duration: Theme.fast } }
                         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border; opacity: 0.5 }

@@ -26,6 +26,10 @@ QtObject {
     readonly property color border:    dark ? "#24262B" : "#CBC9BC"
     readonly property color borderStrong: dark ? "#343842" : "#AFAD9E"
     readonly property color overlay:   dark ? Qt.rgba(0.02, 0.02, 0.04, 0.66) : Qt.rgba(0.12, 0.12, 0.14, 0.34)
+    // Row / menu-item hover: a clean elevation above the local surface. In light
+    // this is white, not the muddy grey that surface2/3 read as on the sidebar
+    // and popups; in dark it's a subtle lift.
+    readonly property color hover:     dark ? "#2B2E35" : "#FFFFFF"
 
     // Text
     readonly property color text:      dark ? "#ECEDEF" : "#1C1D20"
@@ -36,6 +40,8 @@ QtObject {
     readonly property color accent:      dark ? "#6E93FF" : "#3A63E0"
     readonly property color accentHover: dark ? "#88A6FF" : "#2E52C8"
     readonly property color accentSoft:  Qt.rgba(accent.r, accent.g, accent.b, dark ? 0.15 : 0.10)
+    // Fainter accent wash — for transient row hover in the results grid.
+    readonly property color accentFaint: Qt.rgba(accent.r, accent.g, accent.b, dark ? 0.10 : 0.07)
     readonly property color accent2:     dark ? "#7FE3C6" : "#2FA98A"  // paired tone for the brand mark
     readonly property color accentInk:   "#FFFFFF"
 

@@ -133,19 +133,29 @@ Popup {
                 model: root.creds
                 spacing: 4
                 boundsBehavior: Flickable.StopAtBounds
+                property int hoveredIndex: -1
+                HoverHandler { onHoveredChanged: if (!hovered) list.hoveredIndex = -1 }
 
                 delegate: AbstractButton {
                     id: row
+                    required property int index
                     required property var modelData
                     width: list.width
                     implicitHeight: 54
-                    hoverEnabled: true
+                    hoverEnabled: false
                     focusPolicy: Qt.NoFocus
+                    readonly property bool hov: list.hoveredIndex === row.index
+                    HoverHandler {
+                        onHoveredChanged: {
+                            if (hovered) list.hoveredIndex = row.index
+                            else if (list.hoveredIndex === row.index) list.hoveredIndex = -1
+                        }
+                    }
                     onClicked: root.startEdit(modelData.id)
                     background: Rectangle {
                         radius: Theme.radius
-                        color: row.hovered ? Theme.surface2 : "transparent"
-                        border.color: row.hovered ? Theme.border : "transparent"
+                        color: row.hov ? Theme.hover : "transparent"
+                        border.color: row.hov ? Theme.border : "transparent"
                         Behavior on color { ColorAnimation { duration: Theme.fast } }
                     }
                     contentItem: RowLayout {
@@ -174,14 +184,14 @@ Popup {
                             Icon {
                                 anchors.centerIn: parent
                                 name: "chevron"; size: 13; color: Theme.textFaint
-                                opacity: row.hovered ? 0 : 1
+                                opacity: row.hov ? 0 : 1
                                 Behavior on opacity { NumberAnimation { duration: Theme.fast } }
                             }
                             IconButton {
                                 anchors.centerIn: parent
                                 iconName: "trash"; iconSize: 14; danger: true
-                                opacity: row.hovered ? 1 : 0
-                                visible: row.hovered
+                                opacity: row.hov ? 1 : 0
+                                visible: row.hov
                                 tip: qsTr("Delete")
                                 onClicked: { CredentialStore.remove(row.modelData.id); root.refresh() }
                             }
