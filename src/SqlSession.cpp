@@ -47,8 +47,16 @@ public slots:
             }
             dberrhandle(onDbError);
             dbmsghandle(onDbMessage);
+            // Global (per-process) timeouts so an unreachable or wedged server
+            // can never block the worker thread indefinitely — which would in
+            // turn freeze the GUI thread when the session is torn down.
+            dbsettime(60);     // seconds to wait on any server response
             g_dbInited = true;
         }
+
+        // Bound the TCP login so dbopen() fails fast on an unreachable host
+        // instead of stalling on the OS default connect timeout (~75s).
+        dbsetlogintime(8);
 
         LOGINREC* login = dblogin();
         if (!login) {
@@ -100,29 +108,21 @@ public slots:
     {
         t_current = this;
         if (!m_proc) {
-            emit result({}, {}, -1, 0, QStringLiteral("Not connected."));
+            emit results({}, 0, QStringLiteral("Not connected."));
             return;
         }
         m_err.clear();
         QElapsedTimer timer;
         timer.start();
 
-        QStringList columns;
-        QVector<QStringList> rows;
-        int affected = -1;
+        QVector<SqlResultSet> sets;
         QString err;
-        const bool ok = runQuery(sql, columns, rows, affected, err);
+        const bool ok = runBatch(sql, sets, err);
         const qint64 ms = timer.elapsed();
 
-        if (!ok) {
-            emit result({}, {}, -1, ms, err.isEmpty() ? QStringLiteral("Query failed.") : err.trimmed());
-            return;
-        }
-        QString msg;
-        if (columns.isEmpty())
-            msg = affected >= 0 ? QObject::tr("%n row(s) affected", nullptr, affected)
-                                : QStringLiteral("Command completed.");
-        emit result(columns, rows, affected, ms, msg);
+        emit results(sets, ms,
+                     ok ? QString()
+                        : (err.isEmpty() ? QStringLiteral("Query failed.") : err.trimmed()));
     }
 
     // Fetches fast metadata stats (no table scan) for one table on this same
@@ -161,8 +161,7 @@ signals:
     void connected(const QStringList& databases, const QString& currentDb, const QStringList& tables);
     void switched(const QString& currentDb, const QStringList& tables);
     void failed(const QString& error);
-    void result(const QStringList& columns, const QVector<QStringList>& rows,
-                int affected, qint64 elapsedMs, const QString& message);
+    void results(const QVector<SqlResultSet>& sets, qint64 elapsedMs, const QString& error);
     void statsReady(const QString& table, qint64 rowCount, qint64 sizeKb);
 
 public:
@@ -257,6 +256,42 @@ private:
         return true;
     }
 
+    // Runs a batch and captures every result set it produces (each SELECT yields
+    // one; non-row statements yield a column-less set carrying the affected count).
+    bool runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err)
+    {
+        if (dbcmd(m_proc, sql.toUtf8().constData()) == FAIL || dbsqlexec(m_proc) == FAIL) {
+            err = m_err;
+            return false;
+        }
+        RETCODE rc;
+        while ((rc = dbresults(m_proc)) != NO_MORE_RESULTS) {
+            if (rc == FAIL) {
+                err = m_err;
+                return false;
+            }
+            const int ncols = dbnumcols(m_proc);
+            SqlResultSet set;
+            if (ncols > 0) {
+                for (int c = 1; c <= ncols; ++c)
+                    set.columns << QString::fromUtf8(dbcolname(m_proc, c));
+                while (dbnextrow(m_proc) != NO_MORE_ROWS) {
+                    QStringList row;
+                    row.reserve(ncols);
+                    for (int c = 1; c <= ncols; ++c)
+                        row << cell(c);
+                    set.rows << row;
+                }
+            } else {
+                while (dbnextrow(m_proc) != NO_MORE_ROWS) { }
+            }
+            const DBINT n = DBCOUNT(m_proc);
+            set.affected = n >= 0 ? int(n) : -1;
+            sets << set;
+        }
+        return true;
+    }
+
     // Converts the current row's column `c` to text; a true SQL NULL becomes a
     // null QString (rendered as "NULL" by the view).
     QString cell(int c)
@@ -331,6 +366,7 @@ SqlSession::SqlSession(const QString& hostId, const QString& host, int port,
     , m_result(new SqlResultModel(this))
 {
     qRegisterMetaType<QVector<QStringList>>("QVector<QStringList>");
+    qRegisterMetaType<QVector<SqlResultSet>>("QVector<SqlResultSet>");
 
     m_idleTimer.setSingleShot(true);
     connect(&m_idleTimer, &QTimer::timeout, this, [this] {
@@ -352,7 +388,7 @@ SqlSession::SqlSession(const QString& hostId, const QString& host, int port,
     connect(m_worker, &SqlWorker::connected, this, &SqlSession::onConnected);
     connect(m_worker, &SqlWorker::switched, this, &SqlSession::onSwitched);
     connect(m_worker, &SqlWorker::failed, this, &SqlSession::onFailed);
-    connect(m_worker, &SqlWorker::result, this, &SqlSession::onResult);
+    connect(m_worker, &SqlWorker::results, this, &SqlSession::onResults);
     connect(m_worker, &SqlWorker::statsReady, this, &SqlSession::onStats);
     m_thread.start();
 }
@@ -469,6 +505,7 @@ void SqlSession::execute(const QString& sql)
 {
     if (sql.trimmed().isEmpty())
         return;
+    m_batchSql = sql;
     // Reset table stats; refetched after the result if this is a single-table read.
     m_pendingStatsTable = sourceTable(sql);
     if (!m_statsTable.isEmpty() || m_tableRowCount >= 0 || m_tableSizeKb >= 0) {
@@ -565,32 +602,93 @@ void SqlSession::onFailed(const QString& error)
     setState(Failed);
 }
 
-void SqlSession::onResult(const QStringList& columns, const QVector<QStringList>& rows,
-                          int affected, qint64 elapsed, const QString& message)
+QVariantList SqlSession::resultModels() const
 {
-    m_result->reset(columns, rows);
-    m_affected = affected;
-    m_elapsed = elapsed;
-    m_message = message;
-    emit messageChanged();
-    if (columns.isEmpty() && !message.isEmpty() && affected < 0
-        && message != QStringLiteral("Command completed.")) {
-        m_errorText = message; // a query error arrives as a message with no columns
-        emit errorChanged();
-    } else {
-        m_errorText.clear();
-        emit errorChanged();
+    QVariantList out;
+    if (m_sets.isEmpty())
+        return out;
+    out.append(QVariant::fromValue(static_cast<QObject*>(m_result)));
+    for (SqlResultModel* m : m_extraModels)
+        out.append(QVariant::fromValue(static_cast<QObject*>(m)));
+    return out;
+}
+
+void SqlSession::rebuildModels()
+{
+    for (SqlResultModel* m : std::as_const(m_extraModels))
+        m->deleteLater();
+    m_extraModels.clear();
+
+    if (m_sets.isEmpty()) {
+        m_result->reset({}, {});
+        return;
     }
-    m_statusText = columns.isEmpty()
-                       ? message
-                       : QObject::tr("%n row(s)", nullptr, rows.size())
-                             + QStringLiteral(" · %1 ms").arg(elapsed);
-    emit statusChanged();
+    m_result->reset(m_sets.at(0).columns, m_sets.at(0).rows);
+    for (int i = 1; i < m_sets.size(); ++i) {
+        auto* m = new SqlResultModel(this);
+        m->reset(m_sets.at(i).columns, m_sets.at(i).rows);
+        m_extraModels.append(m);
+    }
+}
+
+void SqlSession::onResults(const QVector<SqlResultSet>& sets, qint64 elapsed, const QString& error)
+{
+    m_elapsed = elapsed;
+
+    // Split into grid sets (with columns) and a running tally of affected rows
+    // from the statements that returned none.
+    m_sets.clear();
+    int affected = -1;
+    for (const SqlResultSet& s : sets) {
+        if (!s.columns.isEmpty())
+            m_sets << s;
+        else if (s.affected >= 0)
+            affected = (affected < 0 ? 0 : affected) + s.affected;
+    }
+    m_affected = affected;
+
+    if (!error.isEmpty()) {
+        m_sets.clear();
+        rebuildModels();
+        emit resultsChanged();
+        m_message.clear();
+        emit messageChanged();
+        m_errorText = error;
+        emit errorChanged();
+        m_statusText = QStringLiteral("Query failed.");
+        emit statusChanged();
+        setState(Connected);
+        kickIdle();
+        return;
+    }
+
+    rebuildModels();
+    emit resultsChanged();
+
+    m_errorText.clear();
+    emit errorChanged();
+
+    if (m_sets.isEmpty()) {
+        // A batch that returned no rows (e.g. UPDATE/INSERT/DDL).
+        m_message = affected >= 0 ? QObject::tr("%n row(s) affected", nullptr, affected)
+                                  : QStringLiteral("Command completed.");
+        emit messageChanged();
+        m_statusText = m_message;
+        emit statusChanged();
+    } else {
+        m_message.clear();
+        emit messageChanged();
+        const int shown = m_result->rowCountProp();
+        m_statusText = QObject::tr("%n row(s)", nullptr, shown)
+                       + QStringLiteral(" · %1 ms").arg(elapsed);
+        emit statusChanged();
+    }
+
     setState(Connected);
     kickIdle();
 
-    // Kick off the background table-stats fetch for a single-table read.
-    if (!columns.isEmpty() && !m_pendingStatsTable.isEmpty())
+    // Background table-stats only make sense for a lone single-table SELECT.
+    if (m_sets.size() == 1 && !m_pendingStatsTable.isEmpty())
         emit doStats(m_pendingStatsTable);
 }
 

@@ -24,6 +24,41 @@ Item {
     readonly property bool busy: st === SqlSession.Connecting || st === SqlSession.Executing
     readonly property bool paused: st === SqlSession.Paused || st === SqlSession.Disconnected
 
+    // Saved queries are grouped by the server they belong to ("host:port").
+    readonly property string serverKey: sessionObj ? (sessionObj.host + ":" + sessionObj.port) : ""
+    property var savedQueries: []
+    function refreshSaved() { savedQueries = serverKey !== "" ? QueryStore.forServer(serverKey) : [] }
+    Connections {
+        target: QueryStore
+        function onChanged(server) { if (server === page.serverKey) page.refreshSaved() }
+    }
+    Component.onCompleted: refreshSaved()
+
+    // The SQL that "Save" would store: the selection if any, else the whole editor.
+    readonly property string sqlToSave: editor && editor.selectedText.length > 0 ? editor.selectedText
+                                       : (editor ? editor.text : "")
+    function saveQuery(name) {
+        const sql = page.sqlToSave
+        if (sql.trim() === "" || serverKey === "") return false
+        const nm = (name && name.trim() !== "") ? name.trim()
+                 : sql.replace(/\s+/g, " ").trim().slice(0, 48)
+        QueryStore.save(serverKey, nm, sql)
+        page.toast(qsTr("Query saved"), "info")
+        return true
+    }
+    function loadQuery(sql) { editor.text = sql; editor.forceActiveFocus() }
+    function runSaved(sql) { editor.text = sql; if (sessionObj) sessionObj.execute(sql) }
+    function fmtAgo(iso) {
+        if (!iso) return ""
+        const d = new Date(iso)
+        const s = (Date.now() - d.getTime()) / 1000
+        if (s < 45) return qsTr("just now")
+        if (s < 3600) return qsTr("%1m ago").arg(Math.floor(s / 60))
+        if (s < 86400) return qsTr("%1h ago").arg(Math.floor(s / 3600))
+        if (s < 604800) return qsTr("%1d ago").arg(Math.floor(s / 86400))
+        return Qt.formatDate(d, "MMM d")
+    }
+
     function run() {
         if (!sessionObj) return
         const sel = editor.selectedText
@@ -146,8 +181,7 @@ Item {
                 anchors.rightMargin: 12
                 spacing: 10
 
-                Icon { name: "database"; size: 15; color: Theme.sqlTag }
-                // Database context switcher with search.
+                // Database context switcher with search (carries its own icon).
                 Item {
                     id: dbSwitch
                     Layout.preferredWidth: 240
@@ -407,6 +441,16 @@ Item {
                             wrapMode: TextArea.NoWrap
                             placeholderText: qsTr("Write SQL — ⌘↵ to run")
                             background: null
+                            SqlHighlighter {
+                                document: editor.textDocument
+                                keywordColor: Theme.sqlKeyword
+                                functionColor: Theme.sqlFunction
+                                stringColor: Theme.sqlString
+                                numberColor: Theme.sqlNumber
+                                commentColor: Theme.sqlComment
+                                identifierColor: Theme.sqlIdentifier
+                                operatorColor: Theme.sqlOperator
+                            }
                         }
                     }
                     RowLayout {
@@ -419,382 +463,357 @@ Item {
                             color: Theme.textFaint; font.pixelSize: Theme.fontXs
                         }
                         Item { Layout.fillWidth: true }
+
+                        // Save the current query (or selection) to this server.
+                        GhostButton {
+                            id: saveBtn
+                            text: qsTr("Save")
+                            iconName: "bookmark"
+                            implicitHeight: 30
+                            leftPadding: 12; rightPadding: 14
+                            enabled: page.sqlToSave.trim() !== "" && page.serverKey !== ""
+                            opacity: enabled ? 1 : 0.5
+                            onClicked: {
+                                saveNameField.text = page.sqlToSave.replace(/\s+/g, " ").trim().slice(0, 48)
+                                savePop.open(); saveNameField.selectAll(); saveNameField.forceActiveFocus()
+                            }
+
+                            Popup {
+                                id: savePop
+                                y: -implicitHeight - 6
+                                x: 0
+                                width: 320
+                                padding: 12
+                                background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+                                function commit() {
+                                    if (page.saveQuery(saveNameField.text)) savePop.close()
+                                }
+                                ColumnLayout {
+                                    width: parent.width
+                                    spacing: 8
+                                    Text {
+                                        text: qsTr("Save query")
+                                        color: Theme.text; font.pixelSize: Theme.fontMd; font.weight: Font.DemiBold
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: editor && editor.selectedText.length > 0
+                                              ? qsTr("Saving the selected text")
+                                              : qsTr("Saving the whole editor")
+                                        color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                                    }
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        implicitHeight: 34
+                                        radius: Theme.radius
+                                        color: Theme.surface
+                                        border.color: saveNameField.activeFocus ? Theme.accent : Theme.border
+                                        TextField {
+                                            id: saveNameField
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 10; anchors.rightMargin: 10
+                                            padding: 0; background: null
+                                            verticalAlignment: TextInput.AlignVCenter
+                                            color: Theme.text; font.pixelSize: Theme.fontSm
+                                            placeholderText: qsTr("Name this query…")
+                                            placeholderTextColor: Theme.textFaint
+                                            onAccepted: savePop.commit()
+                                        }
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        Item { Layout.fillWidth: true }
+                                        GhostButton { text: qsTr("Cancel"); onClicked: savePop.close() }
+                                        PrimaryButton { text: qsTr("Save"); onClicked: savePop.commit() }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Browse and recall saved queries for this server.
+                        AbstractButton {
+                            id: savedBtn
+                            implicitHeight: 30
+                            implicitWidth: savedRow.implicitWidth + 22
+                            hoverEnabled: true
+                            focusPolicy: Qt.NoFocus
+                            onClicked: { page.refreshSaved(); savedPop.open() }
+                            background: Rectangle {
+                                radius: Theme.radius
+                                color: savedBtn.hovered || savedPop.visible ? Theme.surface3 : Theme.surface2
+                                border.color: savedPop.visible ? Theme.accent : (savedBtn.hovered ? Theme.borderStrong : Theme.border)
+                                Behavior on color { ColorAnimation { duration: Theme.fast } }
+                            }
+                            contentItem: Row {
+                                id: savedRow
+                                spacing: 6
+                                leftPadding: 12; rightPadding: 10
+                                Icon { name: "bookmark"; size: 13; color: Theme.text
+                                       anchors.verticalCenter: parent.verticalCenter }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: qsTr("Saved")
+                                    color: Theme.text; font.pixelSize: Theme.fontSm; font.weight: Font.Medium
+                                }
+                                Rectangle {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: page.savedQueries.length > 0
+                                    implicitWidth: Math.max(cnt.implicitWidth + 10, 18); implicitHeight: 17
+                                    radius: 8
+                                    color: Theme.surface3
+                                    Text {
+                                        id: cnt; anchors.centerIn: parent
+                                        text: page.savedQueries.length
+                                        color: Theme.textDim; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily
+                                    }
+                                }
+                                Icon { name: "chevron"; size: 10; color: Theme.textFaint; rotation: 270
+                                       anchors.verticalCenter: parent.verticalCenter }
+                            }
+
+                            Popup {
+                                id: savedPop
+                                y: -height - 6
+                                x: savedBtn.width - width
+                                width: 420
+                                implicitHeight: Math.min(libCol.implicitHeight + 16, 460)
+                                padding: 8
+                                onClosed: libSearch.clear()
+                                background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+
+                                readonly property var items: {
+                                    const all = page.savedQueries
+                                    const q = libSearch.text.trim().toLowerCase()
+                                    if (q === "") return all
+                                    return all.filter(x => (x.name || "").toLowerCase().indexOf(q) !== -1
+                                                         || (x.sql || "").toLowerCase().indexOf(q) !== -1)
+                                }
+
+                                ColumnLayout {
+                                    id: libCol
+                                    width: parent.width
+                                    spacing: 8
+
+                                    // Header.
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: 4; Layout.rightMargin: 4; Layout.topMargin: 2
+                                        spacing: 8
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 0
+                                            Text {
+                                                text: qsTr("Saved queries")
+                                                color: Theme.text; font.pixelSize: Theme.fontMd; font.weight: Font.DemiBold
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: page.serverKey
+                                                color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                                                font.family: Theme.monoFamily; elide: Text.ElideMiddle
+                                            }
+                                        }
+                                        Text {
+                                            text: qsTr("%1 saved").arg(page.savedQueries.length)
+                                            color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                                        }
+                                    }
+
+                                    // Search (only worth showing past a few).
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        visible: page.savedQueries.length > 4
+                                        implicitHeight: 30
+                                        radius: Theme.radius
+                                        color: Theme.surface
+                                        border.color: libSearch.activeFocus ? Theme.accent : Theme.border
+                                        RowLayout {
+                                            anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 8; spacing: 6
+                                            Icon { name: "search"; size: 12; color: Theme.textFaint }
+                                            TextField {
+                                                id: libSearch
+                                                Layout.fillWidth: true; padding: 0; background: null
+                                                color: Theme.text; font.pixelSize: Theme.fontSm
+                                                placeholderText: qsTr("Search saved queries"); placeholderTextColor: Theme.textFaint
+                                            }
+                                        }
+                                    }
+
+                                    // Empty state.
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.margins: 8
+                                        spacing: 4
+                                        visible: page.savedQueries.length === 0
+                                        Text {
+                                            text: qsTr("No saved queries yet")
+                                            color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.DemiBold
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: qsTr("Write a query, then press Save to keep it here for this server.")
+                                            color: Theme.textFaint; font.pixelSize: Theme.fontXs; wrapMode: Text.WordWrap
+                                        }
+                                    }
+
+                                    // List.
+                                    ListView {
+                                        id: savedList
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: Math.min(contentHeight, 340)
+                                        visible: page.savedQueries.length > 0
+                                        clip: true
+                                        model: savedPop.items
+                                        boundsBehavior: Flickable.StopAtBounds
+                                        ScrollBar.vertical: ScrollBar {}
+                                        spacing: 2
+                                        delegate: ItemDelegate {
+                                            id: sq
+                                            required property var modelData
+                                            width: savedList.width
+                                            height: 50
+                                            hoverEnabled: true
+                                            onClicked: { page.loadQuery(sq.modelData.sql); savedPop.close() }
+                                            background: Rectangle { radius: Theme.radiusSm; color: sq.hovered ? Theme.surface3 : "transparent" }
+                                            contentItem: RowLayout {
+                                                spacing: 6
+                                                ColumnLayout {
+                                                    Layout.fillWidth: true
+                                                    Layout.leftMargin: 8
+                                                    spacing: 2
+                                                    RowLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+                                                        Text {
+                                                            Layout.fillWidth: true
+                                                            text: sq.modelData.name
+                                                            color: Theme.text; font.pixelSize: Theme.fontSm
+                                                            font.weight: Font.DemiBold; elide: Text.ElideRight
+                                                        }
+                                                        Text {
+                                                            visible: !sq.hovered
+                                                            text: page.fmtAgo(sq.modelData.updated)
+                                                            color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                                                        }
+                                                    }
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: (sq.modelData.sql || "").replace(/\s+/g, " ").trim()
+                                                        color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                                                        font.family: Theme.monoFamily; elide: Text.ElideRight; maximumLineCount: 1
+                                                    }
+                                                }
+                                                // Hover actions: Run, Delete.
+                                                Row {
+                                                    Layout.rightMargin: 6
+                                                    spacing: 2
+                                                    visible: sq.hovered
+                                                    AbstractButton {
+                                                        width: 26; height: 26
+                                                        hoverEnabled: true
+                                                        ToolTip.visible: hovered; ToolTip.text: qsTr("Load & run"); ToolTip.delay: 350
+                                                        onClicked: { page.runSaved(sq.modelData.sql); savedPop.close() }
+                                                        background: Rectangle { radius: Theme.radiusSm; color: parent.hovered ? Theme.accentSoft : "transparent" }
+                                                        contentItem: Icon { name: "zap"; size: 13
+                                                            color: parent.hovered ? Theme.accent : Theme.textDim; anchors.centerIn: parent }
+                                                    }
+                                                    AbstractButton {
+                                                        width: 26; height: 26
+                                                        hoverEnabled: true
+                                                        ToolTip.visible: hovered; ToolTip.text: qsTr("Delete"); ToolTip.delay: 350
+                                                        onClicked: QueryStore.remove(sq.modelData.id)
+                                                        background: Rectangle { radius: Theme.radiusSm; color: parent.hovered ? Theme.dangerSoft : "transparent" }
+                                                        contentItem: Icon { name: "trash"; size: 13
+                                                            color: parent.hovered ? Theme.danger : Theme.textFaint; anchors.centerIn: parent }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: savedList.count === 0 && page.savedQueries.length > 0
+                                            text: qsTr("No matches")
+                                            color: Theme.textFaint; font.pixelSize: Theme.fontSm
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         PrimaryButton {
                             text: page.st === SqlSession.Executing ? qsTr("Running…")
                                 : page.st === SqlSession.Connecting ? qsTr("Resuming…")
                                 : page.paused ? qsTr("Resume & run") : qsTr("Run")
                             iconName: "arrow-right"
+                            implicitHeight: 30
+                            leftPadding: 14; rightPadding: 14
                             enabled: !page.busy
                             onClicked: page.run()
                         }
                     }
                 }
 
-                // Results.
+                // Results — each result grid carries its own search bar; several
+                // stack top-to-bottom for a multi-statement batch.
                 Item {
                     id: resultsArea
                     Layout.fillWidth: true
                     Layout.fillHeight: true
 
                     readonly property var res: sessionObj ? sessionObj.result : null
-                    readonly property bool hasGrid: res && res.columns.length > 0
-                    property int selRow: -1
-                    property int selCol: -1
-                    // Record search: only possible when the grid came from one table.
-                    readonly property string searchTable: sessionObj ? sessionObj.statsTable : ""
-                    readonly property bool canSearch: hasGrid && searchTable !== ""
-                    property string searchCol: ""
+                    readonly property var models: sessionObj ? sessionObj.resultModels : []
+                    readonly property int count: models.length
+                    readonly property bool hasGrid: count > 0
+                    // Server-side record search only for a lone single-table read.
+                    readonly property string serverTable: sessionObj ? sessionObj.statsTable : ""
+                    property var activeGrid: null       // grid the keyboard copy acts on
 
-                    // Runs a server-side search for rows where `searchCol` matches.
-                    function findRecords(exact) {
-                        if (!canSearch || searchCol === "") return
-                        const col = "[" + searchCol.replace(/]/g, "]]") + "]"
-                        const raw = recSearch.text
-                        if (raw.trim() === "") { sessionObj.execute("SELECT TOP 500 * FROM " + searchTable); return }
-                        let sql
-                        if (exact) {
-                            const v = raw.replace(/'/g, "''")
-                            sql = "SELECT TOP 500 * FROM " + searchTable
-                                + " WHERE CAST(" + col + " AS NVARCHAR(MAX)) = '" + v + "'"
-                        } else {
-                            let pat = raw.replace(/[\\%_\[]/g, m => "\\" + m).replace(/'/g, "''")
-                            sql = "SELECT TOP 500 * FROM " + searchTable
-                                + " WHERE CAST(" + col + " AS NVARCHAR(MAX)) LIKE '%" + pat + "%' ESCAPE '\\'"
-                        }
-                        editor.text = sql
-                        sessionObj.execute(sql)
+                    function exec(sql) { editor.text = sql; if (sessionObj) sessionObj.execute(sql) }
+
+                    // Single result set — one full-height grid with its own bar.
+                    ResultGrid {
+                        id: soloGrid
+                        anchors.fill: parent
+                        visible: resultsArea.count === 1
+                        model: resultsArea.res
+                        ordinal: 0
+                        stacked: false
+                        serverTable: resultsArea.serverTable
+                        onToast: (m, k) => page.toast(m, k)
+                        onServerSearch: (sql) => resultsArea.exec(sql)
+                        onActivated: resultsArea.activeGrid = soloGrid
                     }
 
-                    function copySel() {
-                        if (!res || selRow < 0 || selCol < 0) return
-                        Clipboard.copy(res.cellText(selRow, selCol))
-                        page.toast(qsTr("Cell copied"), "info")
-                    }
-                    function copyRow() {
-                        if (!res || selRow < 0) return
-                        Clipboard.copy(res.rowText(selRow))
-                        page.toast(qsTr("Row copied"), "info")
-                    }
-                    function copyRowJson() {
-                        if (!res || selRow < 0) return
-                        const cols = res.columns, o = {}
-                        for (let c = 0; c < cols.length; c++)
-                            o[cols[c]] = res.cellText(selRow, c)
-                        Clipboard.copy(JSON.stringify(o, null, 2))
-                        page.toast(qsTr("Row copied as JSON"), "info")
-                    }
-                    function copyColumn() {
-                        if (!res || selCol < 0) return
-                        const out = []
-                        for (let r = 0; r < res.rows; r++)
-                            out.push(res.cellText(r, selCol))
-                        Clipboard.copy(out.join("\n"))
-                        page.toast(qsTr("Column copied (%1 values)").arg(res.rows), "info")
-                    }
-                    function copyInsert() {
-                        if (!res || selRow < 0) return
-                        const cols = res.columns
-                        const tbl = sessionObj && sessionObj.statsTable ? sessionObj.statsTable : "table"
-                        const vals = []
-                        for (let c = 0; c < cols.length; c++) {
-                            const v = res.cellText(selRow, c)
-                            if (v === "NULL") vals.push("NULL")
-                            else if (/^-?\d+(\.\d+)?$/.test(v)) vals.push(v)
-                            else vals.push("'" + v.replace(/'/g, "''") + "'")
-                        }
-                        Clipboard.copy("INSERT INTO " + tbl + " (" + cols.join(", ") + ")\nVALUES (" + vals.join(", ") + ");")
-                        page.toast(qsTr("Copied as INSERT"), "info")
-                    }
-
-                    // Right-click menu for the selected cell/row.
-                    Menu {
-                        id: cellMenu
-                        padding: 6
-                        background: Rectangle { implicitWidth: 210; radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
-                        enter: Transition { ParallelAnimation {
-                            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.fast }
-                            NumberAnimation { property: "scale"; from: 0.96; to: 1; duration: Theme.normal; easing.type: Theme.easing } } }
-                        exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 80 } }
-                        delegate: MenuItem {
-                            id: cmi
-                            implicitHeight: 30
-                            contentItem: Text {
-                                leftPadding: 6; text: cmi.text; color: Theme.text
-                                font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter
+                    // Multiple result sets — stacked, each with its own bar.
+                    ListView {
+                        anchors.fill: parent
+                        visible: resultsArea.count > 1
+                        clip: true
+                        model: resultsArea.count > 1 ? resultsArea.models : []
+                        spacing: 0
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
+                        delegate: ResultGrid {
+                            id: stackGrid
+                            required property int index
+                            required property var modelData
+                            width: ListView.view.width
+                            height: {
+                                const rows = modelData && modelData.rows !== undefined ? modelData.rows : 0
+                                const bodyRows = Math.min(Math.max(rows, 1), 12)
+                                return 28 + 44 + 30 + bodyRows * 28 + 1  // header + bar + col-head + rows
                             }
-                            background: Rectangle { radius: Theme.radiusSm; color: cmi.highlighted ? Theme.surface3 : "transparent" }
-                        }
-                        Action { text: qsTr("Copy cell"); onTriggered: resultsArea.copySel() }
-                        Action { text: qsTr("Copy row"); onTriggered: resultsArea.copyRow() }
-                        Action { text: qsTr("Copy row as JSON"); onTriggered: resultsArea.copyRowJson() }
-                        Action { text: qsTr("Copy as INSERT"); onTriggered: resultsArea.copyInsert() }
-                        MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: Theme.border } }
-                        Action { text: qsTr("Copy column"); onTriggered: resultsArea.copyColumn() }
-                    }
-
-                    Connections {
-                        target: resultsArea.res
-                        function onResetted() {
-                            resultsArea.selRow = -1; resultsArea.selCol = -1
-                            // Default the search column to the first one if unset/stale.
-                            const cols = resultsArea.res ? resultsArea.res.columns : []
-                            if (cols.indexOf(resultsArea.searchCol) === -1)
-                                resultsArea.searchCol = cols.length ? cols[0] : ""
-                            table.forceLayout()
-                        }
-                        function onSortChanged() { table.forceLayout() }
-                    }
-
-                    // Record search bar — find rows by a column value (server-side).
-                    Rectangle {
-                        id: searchBar
-                        anchors { top: parent.top; left: parent.left; right: parent.right }
-                        height: 40
-                        visible: resultsArea.canSearch
-                        color: Theme.surface
-                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10; anchors.rightMargin: 10
-                            spacing: 8
-                            Icon { name: "search"; size: 14; color: Theme.textFaint }
-                            Text {
-                                text: qsTr("Find in")
-                                color: Theme.textDim; font.pixelSize: Theme.fontSm
-                            }
-
-                            // Column picker.
-                            Item {
-                                Layout.preferredWidth: 160
-                                implicitHeight: 28
-                                AbstractButton {
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    focusPolicy: Qt.NoFocus
-                                    onClicked: { colPop.open(); colSearch.forceActiveFocus() }
-                                    background: Rectangle {
-                                        radius: Theme.radius
-                                        color: parent.hovered ? Theme.surface2 : Theme.bg
-                                        border.color: colPop.visible ? Theme.accent : Theme.border
-                                    }
-                                    contentItem: RowLayout {
-                                        spacing: 4
-                                        Text {
-                                            Layout.fillWidth: true; Layout.leftMargin: 10
-                                            text: resultsArea.searchCol || qsTr("column")
-                                            color: Theme.text; font.pixelSize: Theme.fontSm
-                                            font.family: Theme.monoFamily
-                                            verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
-                                        }
-                                        Icon { Layout.rightMargin: 8; name: "chevron"; size: 10; color: Theme.textFaint; rotation: 90 }
-                                    }
-                                }
-                                Popup {
-                                    id: colPop
-                                    y: parent.height + 4
-                                    width: 220
-                                    implicitHeight: Math.min(colColumn.implicitHeight + 12, 320)
-                                    padding: 6
-                                    onClosed: colSearch.clear()
-                                    background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
-                                    readonly property var cols: {
-                                        const all = resultsArea.res ? resultsArea.res.columns : []
-                                        const q = colSearch.text.trim().toLowerCase()
-                                        return q === "" ? all : all.filter(c => c.toLowerCase().indexOf(q) !== -1)
-                                    }
-                                    contentItem: ColumnLayout {
-                                        id: colColumn
-                                        spacing: 6
-                                        Rectangle {
-                                            Layout.fillWidth: true; implicitHeight: 28; radius: Theme.radius
-                                            color: Theme.surface; border.color: colSearch.activeFocus ? Theme.accent : Theme.border
-                                            RowLayout {
-                                                anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 8; spacing: 6
-                                                Icon { name: "search"; size: 12; color: Theme.textFaint }
-                                                TextField {
-                                                    id: colSearch
-                                                    Layout.fillWidth: true; padding: 0; background: null
-                                                    color: Theme.text; font.pixelSize: Theme.fontSm
-                                                    placeholderText: qsTr("Search columns"); placeholderTextColor: Theme.textFaint
-                                                }
-                                            }
-                                        }
-                                        ListView {
-                                            id: colList
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: Math.min(contentHeight, 260)
-                                            clip: true
-                                            model: colPop.cols
-                                            boundsBehavior: Flickable.StopAtBounds
-                                            ScrollBar.vertical: ScrollBar {}
-                                            delegate: ItemDelegate {
-                                                required property string modelData
-                                                width: colList.width; height: 28
-                                                readonly property bool current: resultsArea.searchCol === modelData
-                                                contentItem: Text {
-                                                    leftPadding: 6; text: modelData
-                                                    color: current ? Theme.accent : Theme.text
-                                                    font.pixelSize: Theme.fontSm; font.family: Theme.monoFamily
-                                                    verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
-                                                }
-                                                background: Rectangle { radius: Theme.radiusSm; color: hovered ? Theme.surface3 : "transparent" }
-                                                onClicked: { resultsArea.searchCol = modelData; colPop.close() }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                implicitHeight: 28
-                                radius: Theme.radius
-                                color: Theme.bg
-                                border.color: recSearch.activeFocus ? Theme.accent : Theme.border
-                                RowLayout {
-                                    anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 6; spacing: 6
-                                    TextField {
-                                        id: recSearch
-                                        Layout.fillWidth: true; padding: 0; background: null
-                                        color: Theme.text; font.pixelSize: Theme.fontSm
-                                        placeholderText: qsTr("contains value…"); placeholderTextColor: Theme.textFaint
-                                        onAccepted: resultsArea.findRecords(false)
-                                    }
-                                    Icon {
-                                        name: "x"; size: 11; color: Theme.textFaint
-                                        visible: recSearch.text !== ""
-                                        TapHandler { onTapped: { recSearch.clear(); recSearch.forceActiveFocus() } }
-                                    }
-                                }
-                            }
-                            GhostButton { text: qsTr("Exact"); onClicked: resultsArea.findRecords(true) }
-                            PrimaryButton { text: qsTr("Find"); iconName: "search"; onClicked: resultsArea.findRecords(false) }
+                            model: modelData
+                            ordinal: index
+                            stacked: true
+                            serverTable: ""   // per-set in-memory filter
+                            onToast: (m, k) => page.toast(m, k)
+                            onActivated: resultsArea.activeGrid = stackGrid
                         }
                     }
 
-                    GridLayout {
-                        anchors { left: parent.left; right: parent.right; bottom: parent.bottom
-                                  top: searchBar.visible ? searchBar.bottom : parent.top }
-                        columns: 2
-                        rowSpacing: 0
-                        columnSpacing: 0
-                        visible: resultsArea.hasGrid
-
-                        // Top-left corner filler, aligned with the two headers.
-                        Rectangle {
-                            Layout.preferredWidth: vhv.width
-                            Layout.preferredHeight: 30
-                            color: Theme.surface2
-                            border.color: Theme.border
-                        }
-                        HorizontalHeaderView {
-                            id: hhv
-                            Layout.fillWidth: true
-                            syncView: table
-                            clip: true
-                            delegate: Rectangle {
-                                id: hcell
-                                required property int index
-                                required property string display
-                                implicitHeight: 30
-                                readonly property bool sorted: resultsArea.res && resultsArea.res.sortColumn === index
-                                color: hhvHover.hovered ? Theme.surface3 : Theme.surface2
-                                border.color: Theme.border
-                                Behavior on color { ColorAnimation { duration: Theme.fast } }
-                                HoverHandler { id: hhvHover }
-                                TapHandler { onTapped: if (resultsArea.res) resultsArea.res.sortByColumn(hcell.index) }
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 10
-                                    anchors.rightMargin: 6
-                                    spacing: 4
-                                    Text {
-                                        Layout.fillWidth: true
-                                        verticalAlignment: Text.AlignVCenter
-                                        text: hcell.display
-                                        color: hcell.sorted ? Theme.text : Theme.textDim
-                                        font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
-                                        elide: Text.ElideRight
-                                    }
-                                    Text {
-                                        visible: hcell.sorted
-                                        text: resultsArea.res && resultsArea.res.sortAscending ? "▲" : "▼"
-                                        color: Theme.accent; font.pixelSize: 8
-                                    }
-                                }
-                            }
-                        }
-                        // Row-number gutter.
-                        VerticalHeaderView {
-                            id: vhv
-                            Layout.fillHeight: true
-                            Layout.preferredWidth: 52
-                            syncView: table
-                            clip: true
-                            delegate: Rectangle {
-                                required property int index
-                                implicitWidth: 52
-                                color: Theme.surface2
-                                Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.border }
-                                Text {
-                                    anchors.fill: parent; anchors.rightMargin: 8
-                                    horizontalAlignment: Text.AlignRight; verticalAlignment: Text.AlignVCenter
-                                    text: index + 1
-                                    color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily
-                                }
-                            }
-                        }
-                        TableView {
-                            id: table
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            clip: true
-                            model: resultsArea.res
-                            boundsBehavior: Flickable.StopAtBounds
-                            columnWidthProvider: function (c) {
-                                const w = resultsArea.res ? resultsArea.res.columnWidths[c] : 0
-                                return w ? w : 160
-                            }
-                            rowHeightProvider: function (r) { return 28 }
-                            ScrollBar.vertical: ScrollBar {}
-                            ScrollBar.horizontal: ScrollBar {}
-                            delegate: Rectangle {
-                                id: cell
-                                required property int row
-                                required property int column
-                                required property string display
-                                required property bool isNull
-                                readonly property bool selected: resultsArea.selRow === row && resultsArea.selCol === column
-                                implicitWidth: 160
-                                implicitHeight: 28
-                                color: selected ? Theme.accentSoft : (row % 2 ? Theme.bg : Theme.surface)
-                                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border; opacity: 0.5 }
-                                Rectangle { visible: cell.selected; anchors.fill: parent; color: "transparent"; border.color: Theme.accent; border.width: 1 }
-                                TapHandler {
-                                    onTapped: { resultsArea.selRow = cell.row; resultsArea.selCol = cell.column }
-                                    onDoubleTapped: { resultsArea.selRow = cell.row; resultsArea.selCol = cell.column; resultsArea.copySel() }
-                                }
-                                TapHandler {
-                                    acceptedButtons: Qt.RightButton
-                                    onTapped: {
-                                        resultsArea.selRow = cell.row
-                                        resultsArea.selCol = cell.column
-                                        cellMenu.popup()
-                                    }
-                                }
-                                Text {
-                                    anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 6
-                                    verticalAlignment: Text.AlignVCenter
-                                    text: cell.isNull ? "NULL" : cell.display
-                                    color: cell.isNull ? Theme.textFaint : Theme.text
-                                    font.italic: cell.isNull === true
-                                    font.family: Theme.monoFamily; font.pixelSize: Theme.fontSm
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-                    }
-
+                    // Empty / message / error state.
                     Column {
                         anchors.centerIn: parent
                         spacing: 10
@@ -865,7 +884,7 @@ Item {
     Shortcut { sequence: "Meta+Enter"; enabled: page.active; onActivated: page.run() }
     // Copy the selected cell; Shift adds the whole row. Only when a cell is
     // selected, so the editor keeps normal copy while it has focus.
-    Shortcut { sequences: [StandardKey.Copy]; enabled: page.active && resultsArea.selRow >= 0; onActivated: resultsArea.copySel() }
-    Shortcut { sequence: "Ctrl+Shift+C"; enabled: page.active && resultsArea.selRow >= 0; onActivated: resultsArea.copyRow() }
-    Shortcut { sequence: "Meta+Shift+C"; enabled: page.active && resultsArea.selRow >= 0; onActivated: resultsArea.copyRow() }
+    Shortcut { sequences: [StandardKey.Copy]; enabled: page.active && resultsArea.activeGrid && resultsArea.activeGrid.selRow >= 0; onActivated: resultsArea.activeGrid.copySel() }
+    Shortcut { sequence: "Ctrl+Shift+C"; enabled: page.active && resultsArea.activeGrid && resultsArea.activeGrid.selRow >= 0; onActivated: resultsArea.activeGrid.copyRow() }
+    Shortcut { sequence: "Meta+Shift+C"; enabled: page.active && resultsArea.activeGrid && resultsArea.activeGrid.selRow >= 0; onActivated: resultsArea.activeGrid.copyRow() }
 }

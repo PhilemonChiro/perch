@@ -85,6 +85,8 @@ private:
         int index;
         int depth;
         QString id; // cached so stale rows resolve after m_hosts/m_folders change
+        bool header = false;    // a type-group header ("Remote desktops" / "Databases")
+        QString headerType;     // "rdp" | "mssql" for a header row
     };
 
     QString rowId(const Row& r) const;
@@ -102,4 +104,5 @@ private:
     QList<Host> m_hosts;
     QList<Row> m_rows;
     QString m_typeFilter;
+    bool m_groupByType = true; // group top-level hosts under type headers
 };

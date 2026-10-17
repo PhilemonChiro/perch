@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import QtQuick.Shapes
 import Relay
 
 Rectangle {
@@ -87,36 +88,19 @@ Rectangle {
         ListView {
             id: tabs
             Layout.fillWidth: true
-            Layout.preferredHeight: 34
+            Layout.fillHeight: true
+            Layout.topMargin: 8
             orientation: ListView.Horizontal
-            spacing: 4
+            // Tabs are slanted trapezoids that overlap: each tab's angled edge
+            // tucks under its neighbour, and the active one rises to the front.
+            readonly property int slant: 18
+            spacing: -slant
             clip: true
             model: SessionManager
             currentIndex: root.current
             boundsBehavior: Flickable.StopAtBounds
             interactive: contentWidth > width
-            readonly property real tabWidth: count ? Math.max(130, Math.min(220, (width - spacing * (count - 1)) / count)) : 220
-
-            // The active pill slides between tabs.
-            highlightFollowsCurrentItem: true
-            highlightMoveDuration: 260
-            highlightMoveVelocity: -1
-            highlightResizeDuration: 260
-            highlightResizeVelocity: -1
-            highlight: Rectangle {
-                radius: Theme.radius
-                color: Theme.surface
-                border.color: Theme.border
-                opacity: root.current >= 0 ? 1 : 0
-                Behavior on opacity { NumberAnimation { duration: Theme.normal } }
-                Rectangle {
-                    anchors.bottom: parent.bottom
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottomMargin: 3
-                    width: 18; height: 2; radius: 1
-                    color: Theme.accent
-                }
-            }
+            readonly property real tabWidth: count ? Math.max(150, Math.min(240, (width + slant * (count - 1)) / count + slant)) : 240
 
             add: Transition {
                 ParallelAnimation {
@@ -140,57 +124,129 @@ Rectangle {
                 required property int state
                 required property string kind
                 readonly property bool active: index === root.current
+                readonly property color kc: Theme.kindColor(tab.kind)
+                // Context that distinguishes two tabs to the same host: the
+                // database for SQL, the sign-in user for RDP.
+                readonly property string subtitle: {
+                    if (!tab.session) return ""
+                    if (tab.kind === "sql") return tab.session.currentDatabase || tab.session.database || ""
+                    return tab.session.username || ""
+                }
 
                 width: tabs.tabWidth
-                height: 34
+                height: tabs.height
                 hoverEnabled: true
                 focusPolicy: Qt.NoFocus
                 onClicked: root.select(index)
+                // Active tab on top; otherwise left tabs overlap those to the right.
+                z: tab.active ? 1000 : (500 - index)
 
                 TapHandler {
                     acceptedButtons: Qt.MiddleButton
                     onTapped: root.closeTab(tab.index)
                 }
 
-                background: Rectangle {
-                    radius: Theme.radius
-                    color: !tab.active && tab.hovered ? Theme.surface2 : "transparent"
-                    Behavior on color { ColorAnimation { duration: Theme.fast } }
+                // Chrome-style tab: curved S-shaped sides that flare out to the
+                // baseline where the tab meets the toolbar below. The active tab
+                // fills with the content surface so it reads as connected (no
+                // underline); the outline skips the bottom edge.
+                background: Shape {
+                    id: tabShape
+                    anchors.fill: parent
+                    preferredRendererType: Shape.CurveRenderer
+                    readonly property real s: tabs.slant
+                    readonly property real w: tab.width
+                    readonly property real h: tab.height
+                    ShapePath {
+                        strokeWidth: 0
+                        strokeColor: "transparent"
+                        fillColor: tab.active ? Theme.surface : (tab.hovered ? Theme.surface2 : Theme.sidebar)
+                        startX: 0; startY: tabShape.h
+                        // Left side: flare up from the baseline into the top edge.
+                        PathCubic {
+                            control1X: tabShape.s * 0.82; control1Y: tabShape.h
+                            control2X: tabShape.s * 0.18; control2Y: 0
+                            x: tabShape.s; y: 0
+                        }
+                        PathLine { x: tabShape.w - tabShape.s; y: 0 }
+                        // Right side: ease back down to the baseline.
+                        PathCubic {
+                            control1X: tabShape.w - tabShape.s * 0.18; control1Y: 0
+                            control2X: tabShape.w - tabShape.s * 0.82; control2Y: tabShape.h
+                            x: tabShape.w; y: tabShape.h
+                        }
+                        PathLine { x: 0; y: tabShape.h }
+                    }
+                    ShapePath {
+                        strokeWidth: 1
+                        strokeColor: tab.active ? Theme.borderStrong : Theme.border
+                        fillColor: "transparent"
+                        capStyle: ShapePath.RoundCap
+                        joinStyle: ShapePath.RoundJoin
+                        startX: 0; startY: tabShape.h
+                        PathCubic {
+                            control1X: tabShape.s * 0.82; control1Y: tabShape.h
+                            control2X: tabShape.s * 0.18; control2Y: 0
+                            x: tabShape.s; y: 0
+                        }
+                        PathLine { x: tabShape.w - tabShape.s; y: 0 }
+                        PathCubic {
+                            control1X: tabShape.w - tabShape.s * 0.18; control1Y: 0
+                            control2X: tabShape.w - tabShape.s * 0.82; control2Y: tabShape.h
+                            x: tabShape.w; y: tabShape.h
+                        }
+                    }
                 }
 
                 contentItem: RowLayout {
-                    spacing: 8
-                    // Kind icon carries the colour tag (blue = RDP, violet = SQL);
-                    // a corner dot carries the live phase.
-                    Item {
-                        Layout.leftMargin: 12
-                        implicitWidth: 16; implicitHeight: 16
+                    spacing: 9
+                    // A filled, colour-tagged chip makes the kind unmistakable at
+                    // a glance (violet = SQL, blue = RDP); a corner dot shows phase.
+                    Rectangle {
+                        Layout.leftMargin: tabs.slant + 4
+                        implicitWidth: 24; implicitHeight: 24
+                        radius: Theme.radiusSm
+                        color: Qt.rgba(tab.kc.r, tab.kc.g, tab.kc.b, tab.active ? 0.2 : 0.13)
                         Icon {
                             anchors.centerIn: parent
                             name: tab.kind === "sql" ? "database" : "monitor"
                             size: 14
-                            color: Theme.kindColor(tab.kind)
-                            opacity: tab.active ? 1 : 0.75
+                            color: tab.kc
+                            opacity: tab.active ? 1 : 0.82
                         }
                         Rectangle {
                             visible: tab.state !== 0
-                            width: 6; height: 6; radius: 3
+                            width: 7; height: 7; radius: 3.5
                             color: Theme.phaseColor(tab.state)
                             border.width: 1.5; border.color: Theme.bg
-                            anchors { right: parent.right; bottom: parent.bottom; rightMargin: -1; bottomMargin: -1 }
+                            anchors { right: parent.right; bottom: parent.bottom; rightMargin: -2; bottomMargin: -2 }
                         }
                     }
-                    Text {
+                    // Two-line label: host on top, context (db / user) beneath.
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        text: tab.title
-                        color: tab.active ? Theme.text : Theme.textDim
-                        elide: Text.ElideRight
-                        font.pixelSize: Theme.fontMd
-                        font.weight: tab.active ? Font.Medium : Font.Normal
-                        Behavior on color { ColorAnimation { duration: Theme.fast } }
+                        spacing: 0
+                        Text {
+                            Layout.fillWidth: true
+                            text: tab.title
+                            color: tab.active ? Theme.text : Theme.textDim
+                            elide: Text.ElideRight
+                            font.pixelSize: Theme.fontSm
+                            font.weight: tab.active ? Font.DemiBold : Font.Medium
+                            Behavior on color { ColorAnimation { duration: Theme.fast } }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            visible: tab.subtitle !== ""
+                            text: (tab.kind === "sql" ? "" : "@") + tab.subtitle
+                            color: tab.active ? tab.kc : Theme.textFaint
+                            elide: Text.ElideRight
+                            font.pixelSize: Theme.fontXs
+                            font.family: tab.kind === "sql" ? Theme.fontFamily : Theme.monoFamily
+                        }
                     }
                     IconButton {
-                        Layout.rightMargin: 4
+                        Layout.rightMargin: tabs.slant - 4
                         iconName: "x"; iconSize: 12
                         implicitWidth: 22; implicitHeight: 22
                         opacity: tab.hovered || tab.active ? 1 : 0

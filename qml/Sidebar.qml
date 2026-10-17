@@ -135,6 +135,11 @@ Rectangle {
             spacing: 1
             boundsBehavior: Flickable.StopAtBounds
             property string pendingRename: ""
+            // Single source of truth for which row is hovered — AbstractButton's
+            // own `hovered` gets stuck when the pointer moves quickly between rows,
+            // leaving two highlighted at once.
+            property int hoveredIndex: -1
+            HoverHandler { onHoveredChanged: if (!hovered) list.hoveredIndex = -1 }
 
             ScrollBar.vertical: ScrollBar {
                 policy: ScrollBar.AsNeeded
@@ -330,6 +335,7 @@ Rectangle {
 
     component TreeRow: AbstractButton {
         id: row
+        required property int index
         required property string itemId
         required property string kind
         required property string name
@@ -341,6 +347,18 @@ Rectangle {
         required property string connType
 
         readonly property bool isSql: connType === "mssql"
+        readonly property bool isHeader: kind === "header"
+        // Hover driven by the ListView's single hovered index (reliable).
+        readonly property bool rowHovered: list.hoveredIndex === row.index && !row.isHeader
+        HoverHandler {
+            enabled: !row.isHeader
+            onHoveredChanged: {
+                if (hovered)
+                    list.hoveredIndex = row.index
+                else if (list.hoveredIndex === row.index)
+                    list.hoveredIndex = -1
+            }
+        }
 
         signal activated()
         signal edit()
@@ -355,14 +373,15 @@ Rectangle {
 
         function startRename() { renaming = true; renameField.text = name; renameField.forceActiveFocus(); renameField.selectAll() }
 
-        implicitHeight: 32
-        hoverEnabled: true
+        implicitHeight: row.isHeader ? 32 : 32
+        hoverEnabled: false
         focusPolicy: Qt.NoFocus
-        onClicked: if (!renaming) activated()
+        enabled: !row.isHeader
+        onClicked: if (!renaming && !row.isHeader) activated()
 
         TapHandler {
             acceptedButtons: Qt.RightButton
-            onTapped: menu.popup()
+            onTapped: if (!row.isHeader) menu.popup()
         }
 
         background: Item {
@@ -371,7 +390,10 @@ Rectangle {
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
                 radius: Theme.radiusSm + 1
-                color: row.pressed ? Theme.surface3 : row.hovered ? Theme.surface2 : "transparent"
+                // `surface` is clearly elevated above the sidebar in both themes
+                // (in light, surface2/3 nearly match the sidebar and read as no hover).
+                color: row.pressed ? Theme.surface2 : row.rowHovered ? Theme.surface : "transparent"
+                border.color: row.rowHovered ? Theme.border : "transparent"
                 Behavior on color { ColorAnimation { duration: Theme.fast } }
             }
             // Active-session marker grows in from the edge.
@@ -389,7 +411,27 @@ Rectangle {
 
         contentItem: RowLayout {
             spacing: 8
-            Item { Layout.preferredWidth: 10 + row.depth * 14 }
+            // Type-group header: a label with a divider rule, no icon.
+            Item { Layout.preferredWidth: 16; visible: row.isHeader }
+            Text {
+                visible: row.isHeader
+                text: row.name.toUpperCase()
+                color: Theme.textFaint
+                font.pixelSize: Theme.fontXs
+                font.weight: Font.DemiBold
+                font.letterSpacing: 0.8
+            }
+            Rectangle {
+                visible: row.isHeader
+                Layout.fillWidth: true
+                Layout.leftMargin: 8
+                Layout.rightMargin: 16
+                Layout.alignment: Qt.AlignVCenter
+                implicitHeight: 1
+                color: Theme.border
+            }
+            // Normal connection / folder row.
+            Item { Layout.preferredWidth: 10 + row.depth * 14; visible: !row.isHeader }
             Icon {
                 visible: row.isFolder
                 name: "chevron"
@@ -399,16 +441,17 @@ Rectangle {
                 Behavior on rotation { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutBack } }
             }
             Icon {
+                visible: !row.isHeader
                 name: row.isFolder ? "folder" : (row.isSql ? "database" : "monitor")
                 size: 15
                 // Colour tag: SQL databases in violet, RDP desktops in blue.
                 color: row.isFolder ? Theme.textDim
                      : row.isSql ? Theme.sqlTag
-                     : (row.hovered ? Theme.rdpTag : Theme.textDim)
+                     : (row.rowHovered ? Theme.rdpTag : Theme.textDim)
                 Behavior on color { ColorAnimation { duration: Theme.fast } }
             }
             Text {
-                visible: !row.renaming
+                visible: !row.renaming && !row.isHeader
                 Layout.fillWidth: true
                 text: row.name
                 color: Theme.text
@@ -430,21 +473,21 @@ Rectangle {
                 Keys.onEscapePressed: row.renaming = false
             }
             Text {
-                visible: row.isFolder && !row.hovered && !row.renaming
+                visible: row.isFolder && !row.rowHovered && !row.renaming
                 text: row.childCount
                 color: Theme.textFaint
                 font.pixelSize: Theme.fontXs
                 Layout.rightMargin: 16
             }
             Rectangle {
-                visible: !row.isFolder && row.session !== null && !row.hovered
+                visible: !row.isFolder && row.session !== null && !row.rowHovered
                 Layout.rightMargin: 18
                 implicitWidth: 7; implicitHeight: 7; radius: 3.5
                 color: Theme.phaseColor(row.session ? row.session.phase : 0)
                 Behavior on color { ColorAnimation { duration: Theme.slow } }
             }
             Row {
-                visible: row.hovered && !row.renaming
+                visible: row.rowHovered && !row.renaming
                 Layout.rightMargin: 12
                 spacing: 0
                 IconButton {

@@ -22,6 +22,9 @@ class SqlResultModel : public QAbstractTableModel
     Q_PROPERTY(QVariantList columnWidths READ columnWidths NOTIFY resetted)
     Q_PROPERTY(int sortColumn READ sortColumn NOTIFY sortChanged)
     Q_PROPERTY(bool sortAscending READ sortAscending NOTIFY sortChanged)
+    // In-memory row filter (used when the grid isn't a server-side single table).
+    Q_PROPERTY(bool filtered READ isFiltered NOTIFY filterChanged)
+    Q_PROPERTY(int totalRows READ totalRows NOTIFY resetted)
 
 public:
     explicit SqlResultModel(QObject* parent = nullptr) : QAbstractTableModel(parent) {}
@@ -67,6 +70,49 @@ public:
     QVariantList columnWidths() const { return m_columnWidths; }
     int sortColumn() const { return m_sortColumn; }
     bool sortAscending() const { return m_sortAscending; }
+    bool isFiltered() const { return m_filtered; }
+    int totalRows() const { return int(m_allRows.size()); }
+
+    // Filters the shown rows in memory: keeps rows whose column `column` contains
+    // `text` (or equals it when `exact`). An empty column searches every column.
+    // Empty text clears the filter. Operates on the full fetched set.
+    Q_INVOKABLE void filter(int column, const QString& text, bool exact)
+    {
+        const QString needle = text;
+        beginResetModel();
+        if (needle.isEmpty()) {
+            m_rows = m_allRows;
+            m_filtered = false;
+        } else {
+            const QString n = needle.toLower();
+            m_rows.clear();
+            for (const QStringList& row : std::as_const(m_allRows)) {
+                bool hit = false;
+                const int from = (column >= 0 && column < m_columns.size()) ? column : 0;
+                const int to = (column >= 0 && column < m_columns.size()) ? column + 1 : int(row.size());
+                for (int c = from; c < to && c < row.size(); ++c) {
+                    const QString v = row.at(c);
+                    if (v.isNull())
+                        continue;
+                    if (exact ? (v.compare(needle, Qt::CaseInsensitive) == 0)
+                              : v.toLower().contains(n)) {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (hit)
+                    m_rows << row;
+            }
+            m_filtered = true;
+        }
+        m_sortColumn = -1;
+        m_sortAscending = true;
+        endResetModel();
+        emit resetted();
+        emit sortChanged();
+        emit filterChanged();
+    }
+    Q_INVOKABLE void clearFilter() { filter(-1, QString(), false); }
 
     // Returns one row as a tab-joined string (for copy).
     Q_INVOKABLE QString rowText(int r) const
@@ -122,17 +168,21 @@ public:
         beginResetModel();
         m_columns = columns;
         m_rows = std::move(rows);
+        m_allRows = m_rows;
+        m_filtered = false;
         m_sortColumn = -1;
         m_sortAscending = true;
         computeWidths();
         endResetModel();
         emit resetted();
         emit sortChanged();
+        emit filterChanged();
     }
 
 signals:
     void resetted();
     void sortChanged();
+    void filterChanged();
 
 private:
     enum Roles { IsNullRole = Qt::UserRole + 1 };
@@ -157,8 +207,10 @@ private:
     }
 
     QStringList m_columns;
-    QVector<QStringList> m_rows;
+    QVector<QStringList> m_rows;    // the rows currently shown (filtered/sorted)
+    QVector<QStringList> m_allRows; // the full fetched set, for in-memory filtering
     QVariantList m_columnWidths;
     int m_sortColumn = -1;
     bool m_sortAscending = true;
+    bool m_filtered = false;
 };

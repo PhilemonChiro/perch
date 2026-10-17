@@ -8,13 +8,28 @@ import Relay
 Item {
     id: root
     signal connectHost(string id)
+    signal editHost(string id)
     signal quickConnect(string text)
     signal newHost()
     signal openPalette()
+    signal toast(string message, string kind)
 
     property int refreshTick: 0
-    readonly property var recents: { root.refreshTick; return ConnectionStore.recent(6) }
+    readonly property var recents: { root.refreshTick; return ConnectionStore.recent(8) }
     Connections { target: ConnectionStore; function onChanged() { root.refreshTick++ } }
+
+    // Recents split into typed groups (only non-empty groups are shown).
+    readonly property var recentGroups: {
+        const r = root.recents
+        const servers = r.filter(x => x.type !== "mssql")
+        const dbs = r.filter(x => x.type === "mssql")
+        const out = []
+        if (servers.length) out.push({ title: qsTr("Remote desktops"), icon: "monitor",
+                                       color: Theme.kindColor("rdp"), items: servers })
+        if (dbs.length) out.push({ title: qsTr("Databases"), icon: "database",
+                                   color: Theme.kindColor("sql"), items: dbs })
+        return out
+    }
 
     function greeting() {
         const h = new Date().getHours()
@@ -39,6 +54,7 @@ Item {
             id: content
             width: Math.min(760, root.width - 64)
             x: (root.width - width) / 2
+            readonly property int gridColumns: width > 620 ? 3 : 2
             y: Math.max(56, (root.height - implicitHeight) * 0.32)
             spacing: 0
 
@@ -52,139 +68,91 @@ Item {
                 NumberAnimation { target: rise; property: "y"; to: 0; duration: 520; easing.type: Easing.OutCubic }
             }
 
-            Text {
-                text: root.greeting()
-                color: Theme.text
-                font.pixelSize: Theme.fontHero
-                font.weight: Font.Bold
-                font.letterSpacing: -0.6
+            // Greeting on the left, New connection action on the far right.
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 16
+                Text {
+                    text: root.greeting()
+                    color: Theme.text
+                    font.pixelSize: Theme.fontHero
+                    font.weight: Font.Bold
+                    font.letterSpacing: -0.6
+                }
+                Item { Layout.fillWidth: true }
+                PrimaryButton {
+                    Layout.alignment: Qt.AlignVCenter
+                    text: qsTr("New connection")
+                    iconName: "plus"
+                    onClicked: root.newHost()
+                }
             }
             Text {
                 Layout.topMargin: 6
-                text: qsTr("Where would you like to go?")
+                Layout.fillWidth: true
+                text: root.recents.length > 0
+                      ? qsTr("Jump back into a connection below, or press %1K to search.").arg(Theme.modLabel)
+                      : qsTr("Add a connection from the sidebar, or press %1K to search.").arg(Theme.modLabel)
                 color: Theme.textDim
                 font.pixelSize: Theme.fontLg
+                wrapMode: Text.WordWrap
             }
 
-            // Quick connect bar
-            Item {
-                id: qc
-                Layout.fillWidth: true
-                Layout.topMargin: 28
-                implicitHeight: 56
-
-                function submit() {
-                    const t = qcField.text.trim()
-                    if (!t) { shake.restart(); return }
-                    root.quickConnect(t)
-                    qcField.text = ""
-                }
-
-                transform: Translate { id: shakeX }
-                SequentialAnimation {
-                    id: shake
-                    NumberAnimation { target: shakeX; property: "x"; to: -8; duration: 50 }
-                    NumberAnimation { target: shakeX; property: "x"; to: 7; duration: 60 }
-                    NumberAnimation { target: shakeX; property: "x"; to: -4; duration: 60 }
-                    NumberAnimation { target: shakeX; property: "x"; to: 0; duration: 80; easing.type: Easing.OutBack }
-                }
-
-                RectangularShadow {
-                    anchors.fill: qcBg
-                    radius: qcBg.radius
-                    blur: qcField.activeFocus ? 40 : 20
-                    offset.y: qcField.activeFocus ? 14 : 6
-                    color: qcField.activeFocus ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.28) : Qt.rgba(0, 0, 0, Theme.dark ? 0.4 : 0.08)
-                    Behavior on blur { NumberAnimation { duration: Theme.slow } }
-                    Behavior on color { ColorAnimation { duration: Theme.slow } }
-                }
-                Rectangle {
-                    id: qcBg
-                    anchors.fill: parent
-                    radius: Theme.radiusLg
-                    color: Theme.surface
-                    border.color: qcField.activeFocus ? Theme.accent : Theme.border
-                    Behavior on border.color { ColorAnimation { duration: Theme.normal } }
-                }
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 18
-                    anchors.rightMargin: 8
-                    spacing: 12
-                    Icon {
-                        name: "zap"; size: 18
-                        color: qcField.activeFocus ? Theme.accent : Theme.textFaint
-                        scale: qcField.activeFocus ? 1.1 : 1
-                        Behavior on scale { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutBack } }
-                        Behavior on color { ColorAnimation { duration: Theme.normal } }
-                    }
-                    TextField {
-                        id: qcField
-                        Layout.fillWidth: true
-                        placeholderText: qsTr("user@host:port")
-                        placeholderTextColor: Theme.textFaint
-                        color: Theme.text
-                        font.family: Theme.monoFamily
-                        font.pixelSize: Theme.fontLg
-                        background: null
-                        onAccepted: qc.submit()
-                    }
-                    PrimaryButton {
-                        text: qsTr("Connect")
-                        iconName: "arrow-right"
-                        opacity: qcField.text.length ? 1 : 0.55
-                        Behavior on opacity { NumberAnimation { duration: Theme.normal } }
-                        onClicked: qc.submit()
-                    }
-                }
-            }
-
-            // Recents
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 40
-                visible: root.recents.length > 0
-                Text {
+            // Recents, grouped by kind (Remote desktops / Databases).
+            Repeater {
+                model: root.recentGroups
+                delegate: ColumnLayout {
+                    id: group
+                    required property var modelData
+                    required property int index
                     Layout.fillWidth: true
-                    text: qsTr("Recent")
-                    color: Theme.textDim
-                    font.pixelSize: Theme.fontSm
-                    font.weight: Font.DemiBold
-                    font.letterSpacing: 0.4
-                }
-                Text {
-                    text: qsTr("View all  %1K").arg(Theme.modLabel)
-                    color: allHover.hovered ? Theme.accent : Theme.textFaint
-                    font.pixelSize: Theme.fontSm
-                    HoverHandler { id: allHover; cursorShape: Qt.PointingHandCursor }
-                    TapHandler { onTapped: root.openPalette() }
-                    Behavior on color { ColorAnimation { duration: Theme.fast } }
-                }
-            }
+                    Layout.topMargin: group.index === 0 ? 40 : 28
+                    spacing: 12
 
-            GridLayout {
-                id: grid
-                Layout.fillWidth: true
-                Layout.topMargin: 12
-                columns: content.width > 620 ? 3 : 2
-                columnSpacing: 12
-                rowSpacing: 12
-                readonly property real cell: Math.floor((content.width - columnSpacing * (columns - 1)) / columns)
-
-                Repeater {
-                    model: root.recents
-                    delegate: HostCard {
-                        required property var modelData
-                        required property int index
-                        Layout.preferredWidth: grid.cell
-                        data_: modelData
-                        delay: index * 45
-                        onClicked: root.connectHost(modelData.id)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
+                        Text {
+                            text: group.modelData.title
+                            color: Theme.textDim; font.pixelSize: Theme.fontSm
+                            font.weight: Font.DemiBold; font.letterSpacing: 0.4
+                        }
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignVCenter
+                            implicitHeight: 1
+                            color: Theme.border
+                        }
+                        Text {
+                            visible: group.index === 0
+                            text: qsTr("View all  %1K").arg(Theme.modLabel)
+                            color: allHover.hovered ? Theme.accent : Theme.textFaint
+                            font.pixelSize: Theme.fontSm
+                            HoverHandler { id: allHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: root.openPalette() }
+                            Behavior on color { ColorAnimation { duration: Theme.fast } }
+                        }
                     }
-                }
-                NewCard {
-                    Layout.preferredWidth: grid.cell
-                    onClicked: root.newHost()
+
+                    GridLayout {
+                        id: g
+                        Layout.fillWidth: true
+                        columns: content.gridColumns
+                        columnSpacing: 12
+                        rowSpacing: 12
+                        readonly property real cell: Math.floor((content.width - columnSpacing * (columns - 1)) / columns)
+                        Repeater {
+                            model: group.modelData.items
+                            delegate: HostCard {
+                                required property var modelData
+                                required property int index
+                                Layout.preferredWidth: g.cell
+                                data_: modelData
+                                delay: index * 45
+                                onClicked: root.connectHost(modelData.id)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -220,9 +188,45 @@ Item {
         id: card
         property var data_
         property int delay: 0
+        readonly property bool isSql: card.data_ && card.data_.type === "mssql"
+        readonly property color kc: Theme.kindColor(card.isSql ? "sql" : "rdp")
         implicitHeight: 96
         hoverEnabled: true
         focusPolicy: Qt.NoFocus
+
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: cardMenu.popup()
+        }
+        Menu {
+            id: cardMenu
+            padding: 6
+            background: Rectangle { implicitWidth: 200; radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+            enter: Transition { ParallelAnimation {
+                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: Theme.fast }
+                NumberAnimation { property: "scale"; from: 0.95; to: 1; duration: Theme.normal; easing.type: Theme.easing } } }
+            exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 80 } }
+            delegate: MenuItem {
+                id: cmi
+                implicitHeight: 30
+                readonly property bool danger: text === qsTr("Delete")
+                contentItem: Text { leftPadding: 4; text: cmi.text; color: cmi.danger ? Theme.danger : Theme.text
+                    font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { radius: Theme.radiusSm
+                    color: cmi.highlighted ? (cmi.danger ? Theme.dangerSoft : Theme.surface3) : "transparent" }
+            }
+            Action { text: qsTr("Connect"); onTriggered: if (card.data_) root.connectHost(card.data_.id) }
+            Action { text: qsTr("Edit"); onTriggered: if (card.data_) root.editHost(card.data_.id) }
+            MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: Theme.border } }
+            Action {
+                text: qsTr("Forget password")
+                onTriggered: if (card.data_) { SessionManager.forgetPassword(card.data_.id); root.toast(qsTr("Password forgotten"), "info") }
+            }
+            Action {
+                text: qsTr("Delete")
+                onTriggered: if (card.data_) { const n = card.data_.name; ConnectionStore.remove(card.data_.id); root.toast(qsTr("Removed %1").arg(n), "info") }
+            }
+        }
 
         opacity: 0
         transform: Translate { id: lift; y: card.hovered && !card.pressed ? -3 : 0
@@ -249,7 +253,7 @@ Item {
                 anchors.fill: parent
                 radius: Theme.radiusLg
                 color: Theme.surface
-                border.color: card.hovered ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.55) : Theme.border
+                border.color: card.hovered ? Qt.rgba(card.kc.r, card.kc.g, card.kc.b, 0.55) : Theme.border
                 Behavior on border.color { ColorAnimation { duration: Theme.normal } }
             }
         }
@@ -260,14 +264,26 @@ Item {
                 spacing: 10
                 Rectangle {
                     width: 30; height: 30; radius: 9
-                    color: card.hovered ? Theme.accent : Theme.accentSoft
+                    color: card.hovered ? card.kc : Qt.rgba(card.kc.r, card.kc.g, card.kc.b, Theme.dark ? 0.16 : 0.12)
                     Behavior on color { ColorAnimation { duration: Theme.normal } }
-                    Icon { anchors.centerIn: parent; name: "monitor"; size: 15; color: card.hovered ? Theme.accentInk : Theme.accent
+                    Icon { anchors.centerIn: parent; name: card.isSql ? "database" : "monitor"; size: 15
+                        color: card.hovered ? Theme.accentInk : card.kc
                         Behavior on color { ColorAnimation { duration: Theme.normal } } }
+                }
+                // Type tag so servers vs databases read at a glance.
+                Rectangle {
+                    implicitWidth: tag.implicitWidth + 14; implicitHeight: 18; radius: 9
+                    color: Qt.rgba(card.kc.r, card.kc.g, card.kc.b, Theme.dark ? 0.14 : 0.10)
+                    Text {
+                        id: tag; anchors.centerIn: parent
+                        text: card.isSql ? qsTr("SQL") : qsTr("RDP")
+                        color: card.kc; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
+                        font.letterSpacing: 0.4
+                    }
                 }
                 Item { Layout.fillWidth: true }
                 Icon {
-                    name: "arrow-right"; size: 14; color: Theme.accent
+                    name: "arrow-right"; size: 14; color: card.kc
                     opacity: card.hovered ? 1 : 0
                     transform: Translate { x: card.hovered ? 0 : -6; Behavior on x { NumberAnimation { duration: Theme.normal; easing.type: Theme.easing } } }
                     Behavior on opacity { NumberAnimation { duration: Theme.normal } }
@@ -283,7 +299,13 @@ Item {
             }
             Text {
                 Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.bottomMargin: 12
-                text: card.data_ ? ((card.data_.username ? card.data_.username + "@" : "") + card.data_.host + " · " + root.ago(card.data_.lastConnected)) : ""
+                text: {
+                    if (!card.data_) return ""
+                    const who = card.isSql
+                        ? (card.data_.database ? card.data_.database + " · " : "")
+                        : (card.data_.username ? card.data_.username + "@" : "")
+                    return who + card.data_.host + " · " + root.ago(card.data_.lastConnected)
+                }
                 color: Theme.textFaint
                 elide: Text.ElideRight
                 font.pixelSize: Theme.fontSm

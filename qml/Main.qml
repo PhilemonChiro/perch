@@ -18,10 +18,11 @@ ApplicationWindow {
     property int current: -1
     readonly property int sidebarW: 268
 
-    // Shown on Home or when the user pins it; tucked away while a session is active.
+    // Shown only when the user opens it (⌘B or the tab-strip button); Home is a
+    // full-width dashboard whose cards already list every connection.
     property bool sidebarPinned: false
     readonly property bool fullscreen: visibility === Window.FullScreen
-    readonly property bool sidebarDocked: !fullscreen && (current < 0 || sidebarPinned)
+    readonly property bool sidebarDocked: !fullscreen && sidebarPinned
 
     function toast(msg, kind) { toaster.show(msg, kind) }
     function closeTab(i) { if (i >= 0) SessionManager.close(i) }
@@ -147,9 +148,11 @@ ApplicationWindow {
                     Behavior on opacity { NumberAnimation { duration: Theme.normal } }
                     Behavior on scale { NumberAnimation { duration: Theme.slow; easing.type: Theme.easing } }
                     onConnectHost: id => SessionManager.openHost(id)
+                    onEditHost: id => editor.openEdit(id)
                     onQuickConnect: text => win.quickConnect(text)
                     onNewHost: editor.openNew("")
                     onOpenPalette: palette.open()
+                    onToast: (m, k) => win.toast(m, k)
                 }
 
                 Repeater {
@@ -229,6 +232,14 @@ ApplicationWindow {
     }
 
     CredentialManager { id: credManager }
+
+    // Check GitHub for a newer release shortly after launch; prompt if found.
+    UpdateDialog { id: updateDialog }
+    Timer { interval: 2500; running: true; repeat: false; onTriggered: UpdateChecker.checkForUpdates() }
+    Connections {
+        target: UpdateChecker
+        function onCheckFinished(found) { if (found) updateDialog.open() }
+    }
 
     Toast {
         id: toaster

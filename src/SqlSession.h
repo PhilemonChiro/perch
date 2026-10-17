@@ -5,11 +5,23 @@
 #include <QStringList>
 #include <QThread>
 #include <QTimer>
+#include <QVariantList>
 #include <QVector>
 
 #include "SqlResultModel.h"
 
 class SqlWorker;
+
+// One result set produced by a batch: its columns, its rows, and for a
+// statement without a row set the affected-row count. A batch of several
+// statements (e.g. two SELECTs) produces several of these.
+struct SqlResultSet
+{
+    QStringList columns;
+    QVector<QStringList> rows;
+    int affected = -1;
+};
+Q_DECLARE_METATYPE(QVector<SqlResultSet>)
 
 // One SQL Server (MSSQL) connection. All FreeTDS db-lib calls run on a worker
 // thread (db-lib is single-threaded per connection); this object lives on the
@@ -53,7 +65,11 @@ class SqlSession : public QObject
     Q_PROPERTY(qint64 tableRowCount READ tableRowCount NOTIFY statsChanged)
     Q_PROPERTY(qint64 tableSizeKb READ tableSizeKb NOTIFY statsChanged)
     Q_PROPERTY(bool idle READ isIdle NOTIFY stateChanged)
+    // The first (or only) result set's model; convenient for the status bar.
     Q_PROPERTY(SqlResultModel* result READ result CONSTANT)
+    // One model per result set a batch produced, in order, for stacked display.
+    Q_PROPERTY(int resultCount READ resultCount NOTIFY resultsChanged)
+    Q_PROPERTY(QVariantList resultModels READ resultModels NOTIFY resultsChanged)
 
 public:
     enum State { Idle, Connecting, Connected, Executing, Paused, Disconnected, Failed };
@@ -88,6 +104,8 @@ public:
     qint64 tableSizeKb() const { return m_tableSizeKb; }
     bool isIdle() const { return m_state == Paused; }
     SqlResultModel* result() const { return m_result; }
+    int resultCount() const { return int(m_sets.size()); }
+    QVariantList resultModels() const;
 
     // Connects using a password held in memory for the tab's lifetime. When
     // `remember` is set and this is a saved connection, the password is also
@@ -115,6 +133,7 @@ signals:
     void currentDatabaseChanged();
     void tablesChanged();
     void statsChanged();
+    void resultsChanged();
     // Emitted after a successful connect when the user chose to remember the
     // password for a saved connection; SessionManager writes it to the keychain.
     void rememberPassword(const QString& password);
@@ -131,8 +150,8 @@ private:
     void kickIdle();
     void onConnected(const QStringList& databases, const QString& currentDb, const QStringList& tables);
     void onFailed(const QString& error);
-    void onResult(const QStringList& columns, const QVector<QStringList>& rows,
-                  int affected, qint64 elapsed, const QString& message);
+    void onResults(const QVector<SqlResultSet>& sets, qint64 elapsed, const QString& error);
+    void rebuildModels();
     void onSwitched(const QString& currentDb, const QStringList& tables);
     void onStats(const QString& table, qint64 rowCount, qint64 sizeKb);
     // Returns the single source table of a plain SELECT, or "" if the query
@@ -147,6 +166,9 @@ private:
     QString m_statusText, m_errorText, m_message;
     int m_affected = -1;
     qint64 m_elapsed = 0;
+    QVector<SqlResultSet> m_sets;              // all result sets from the last batch
+    QList<SqlResultModel*> m_extraModels;      // models for sets beyond the first
+    QString m_batchSql;                        // the last batch's SQL (for stats)
     QStringList m_databases, m_tables;
     QString m_currentDatabase;
 

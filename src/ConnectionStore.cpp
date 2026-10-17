@@ -116,7 +116,19 @@ QVariant ConnectionStore::data(const QModelIndex& index, int role) const
     if (role == DepthRole)
         return r.depth;
     if (role == KindRole)
-        return r.folder ? QStringLiteral("folder") : QStringLiteral("host");
+        return r.header ? QStringLiteral("header")
+             : r.folder ? QStringLiteral("folder")
+                        : QStringLiteral("host");
+
+    if (r.header) {
+        switch (role) {
+        case IdRole: return r.id;
+        case ConnTypeRole: return r.headerType;
+        case NameRole:
+            return r.headerType == QLatin1String("mssql") ? tr("Databases") : tr("Remote desktops");
+        default: return {};
+        }
+    }
 
     if (r.folder) {
         const Folder& f = m_folders.at(r.index);
@@ -185,6 +197,26 @@ void ConnectionStore::appendChildren(QList<Row>& rows, const QString& parentId, 
         if (m_folders[i].expanded)
             appendChildren(rows, m_folders[i].id, depth + 1);
     }
+
+    // At the top level, group the unfiled hosts under type headers (folders,
+    // which the user organises explicitly, stay above the groups).
+    if (m_groupByType && parentId.isEmpty() && m_typeFilter.isEmpty()) {
+        QList<int> rdp, sql;
+        for (int i : hosts)
+            (m_hosts[i].type == QLatin1String("mssql") ? sql : rdp) << i;
+        if (!rdp.isEmpty()) {
+            rows.append({false, 0, depth, QStringLiteral("hdr:rdp"), true, QStringLiteral("rdp")});
+            for (int i : rdp)
+                rows.append({false, i, depth, m_hosts[i].id});
+        }
+        if (!sql.isEmpty()) {
+            rows.append({false, 0, depth, QStringLiteral("hdr:mssql"), true, QStringLiteral("mssql")});
+            for (int i : sql)
+                rows.append({false, i, depth, m_hosts[i].id});
+        }
+        return;
+    }
+
     for (int i : hosts) {
         if (!m_typeFilter.isEmpty() && m_hosts[i].type != m_typeFilter)
             continue;

@@ -5,9 +5,9 @@ import Relay
 Button {
     id: root
     property string iconName
-    implicitHeight: 38
-    leftPadding: 16
-    rightPadding: 16
+    implicitHeight: 30
+    leftPadding: 14
+    rightPadding: 14
     hoverEnabled: true
 
     scale: pressed ? 0.97 : 1
@@ -27,7 +27,7 @@ Button {
             anchors.verticalCenter: parent.verticalCenter
             visible: root.iconName !== ""
             name: root.iconName
-            size: 15
+            size: 14
             color: Theme.text
         }
         Text {

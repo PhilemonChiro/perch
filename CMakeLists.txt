@@ -4,7 +4,7 @@ project(Relay VERSION 0.1.3 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.9 REQUIRED COMPONENTS Gui Quick QuickControls2)
+find_package(Qt6 6.9 REQUIRED COMPONENTS Gui Quick QuickControls2 Network)
 find_package(Qt6Keychain REQUIRED)
 find_package(WinPR 3 REQUIRED)
 find_package(FreeRDP 3 REQUIRED)
@@ -46,8 +46,11 @@ qt_add_qml_module(relay
         src/RdpSession.h src/RdpSession.cpp
         src/RdpView.h src/RdpView.cpp
         src/SqlResultModel.h
+        src/SqlHighlighter.h
         src/Clipboard.h
         src/SqlSession.h src/SqlSession.cpp
+        src/QueryStore.h src/QueryStore.cpp
+        src/UpdateChecker.h src/UpdateChecker.cpp
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
@@ -70,10 +73,17 @@ qt_add_qml_module(relay
         qml/components/Card.qml
         qml/components/Toast.qml
         qml/components/Toggle.qml
+        qml/components/ResultGrid.qml
+        qml/UpdateDialog.qml
     RESOURCES ${RELAY_ICONS}
 )
 
 target_include_directories(relay PRIVATE src ${FREETDS_INCLUDE_DIR})
+
+# App version (for the in-app update check) and the GitHub repo to query.
+target_compile_definitions(relay PRIVATE
+    APP_VERSION=${PROJECT_VERSION}
+    UPDATE_REPO="PhilemonChiro/perch")
 
 # WinPR/FreeRDP headers pull in <windows.h>; NOMINMAX keeps its min/max macros
 # from clobbering std::min/std::max. WIN32_LEAN_AND_MEAN trims the include.
@@ -82,7 +92,7 @@ if(WIN32)
 endif()
 
 target_link_libraries(relay PRIVATE
-    Qt6::Gui Qt6::Quick Qt6::QuickControls2
+    Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Network
     Qt6Keychain::Qt6Keychain
     winpr freerdp freerdp-client
     ${FREETDS_LIBRARY}

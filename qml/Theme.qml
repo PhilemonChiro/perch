@@ -1,13 +1,18 @@
 pragma Singleton
 import QtQuick
+import QtCore
 
 // Relay "Calm studio": cool-neutral graphite surfaces, a single calm azure accent
 // for brand and primary action, green reserved for live connection status.
 QtObject {
     id: theme
 
-    // Follows the OS appearance; can be forced via `mode`.
+    // Follows the OS appearance; can be forced via `mode`. Persisted across runs.
     property string mode: "system" // "system" | "dark" | "light"
+    property Settings _settings: Settings {
+        category: "appearance"
+        property alias mode: theme.mode
+    }
     readonly property bool dark: mode === "dark"
         || (mode === "system" && Qt.styleHints.colorScheme !== Qt.ColorScheme.Light)
 
@@ -16,16 +21,16 @@ QtObject {
     readonly property color bg:        dark ? "#131417" : "#EAE9E3"
     readonly property color sidebar:   dark ? "#0F1013" : "#E3E2DB"
     readonly property color surface:   dark ? "#1A1C20" : "#FDFDFC"
-    readonly property color surface2:  dark ? "#22242A" : "#F0EFEA"
-    readonly property color surface3:  dark ? "#2B2E35" : "#E3E2DB"
-    readonly property color border:    dark ? "#24262B" : "#D8D7CE"
-    readonly property color borderStrong: dark ? "#343842" : "#C1C0B5"
+    readonly property color surface2:  dark ? "#22242A" : "#ECEBE4"
+    readonly property color surface3:  dark ? "#2B2E35" : "#DEDCD0"
+    readonly property color border:    dark ? "#24262B" : "#CBC9BC"
+    readonly property color borderStrong: dark ? "#343842" : "#AFAD9E"
     readonly property color overlay:   dark ? Qt.rgba(0.02, 0.02, 0.04, 0.66) : Qt.rgba(0.12, 0.12, 0.14, 0.34)
 
     // Text
     readonly property color text:      dark ? "#ECEDEF" : "#1C1D20"
-    readonly property color textDim:   dark ? "#969AA3" : "#55585F"
-    readonly property color textFaint: dark ? "#5C606A" : "#7B7A70"
+    readonly property color textDim:   dark ? "#969AA3" : "#4E515A"
+    readonly property color textFaint: dark ? "#5C606A" : "#6E6D62"
 
     // Accent — one calm azure, spent sparingly.
     readonly property color accent:      dark ? "#6E93FF" : "#3A63E0"
@@ -82,6 +87,15 @@ QtObject {
         default: return textFaint
         }
     }
+
+    // SQL syntax highlighting — calm, distinct hues that sit on the editor surface.
+    readonly property color sqlKeyword:    dark ? "#6E93FF" : "#3A63E0"  // azure, matches accent
+    readonly property color sqlFunction:   dark ? "#7FE3C6" : "#1F9D6B"  // teal
+    readonly property color sqlString:     dark ? "#E0A26B" : "#B4692A"  // warm amber
+    readonly property color sqlNumber:     dark ? "#C99BFF" : "#8A4FD6"  // violet
+    readonly property color sqlComment:    dark ? "#5C606A" : "#9A998E"  // muted
+    readonly property color sqlIdentifier: dark ? "#9FB4D8" : "#4A5A78"  // steel (for [brackets])
+    readonly property color sqlOperator:   dark ? "#8A8E97" : "#6C6F76"
 
     // Colour tag per connection kind: RDP desktops vs SQL databases.
     readonly property color rdpTag: accent               // blue

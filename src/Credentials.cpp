@@ -1,6 +1,10 @@
 #include "Credentials.h"
 
+#include <QLoggingCategory>
+
 #include <qt6keychain/keychain.h>
+
+Q_LOGGING_CATEGORY(lcCred, "relay.credentials")
 
 namespace {
 const QString kService = QStringLiteral("io.relay.app");
@@ -16,6 +20,8 @@ void read(const QString& key, std::function<void(bool, const QString&)> done)
     QObject::connect(job, &QKeychain::Job::finished, [done = std::move(done)](QKeychain::Job* j) {
         auto* r = static_cast<QKeychain::ReadPasswordJob*>(j);
         const bool ok = r->error() == QKeychain::NoError;
+        if (!ok && r->error() != QKeychain::EntryNotFound)
+            qCWarning(lcCred) << "keychain read failed for" << r->key() << ":" << r->errorString();
         done(ok, ok ? r->textData() : QString());
     });
     job->start();
@@ -27,6 +33,12 @@ void write(const QString& key, const QString& password)
     job->setAutoDelete(true);
     job->setKey(key);
     job->setTextData(password);
+    QObject::connect(job, &QKeychain::Job::finished, [](QKeychain::Job* j) {
+        if (j->error() != QKeychain::NoError)
+            qCWarning(lcCred) << "keychain write failed for" << j->key() << ":" << j->errorString();
+        else
+            qCInfo(lcCred) << "keychain write ok for" << j->key();
+    });
     job->start();
 }
 

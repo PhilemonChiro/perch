@@ -171,9 +171,11 @@ Popup {
                 y: 12
                 spacing: 18
 
-                // Connection type — Remote Desktop or SQL Server.
+                // Connection type — only when creating; an existing connection's
+                // type is fixed, so it's hidden while editing.
                 Column {
                     Layout.fillWidth: true
+                    visible: !root.editing
                     spacing: 6
                     Text { text: qsTr("Type"); color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.Medium }
                     Row {
