@@ -8,19 +8,11 @@
 #include <QVariantList>
 #include <QVector>
 
+#include "SqlBackend.h"
 #include "SqlResultModel.h"
 
 class SqlWorker;
 
-// One result set produced by a batch: its columns, its rows, and for a
-// statement without a row set the affected-row count. A batch of several
-// statements (e.g. two SELECTs) produces several of these.
-struct SqlResultSet
-{
-    QStringList columns;
-    QVector<QStringList> rows;
-    int affected = -1;
-};
 Q_DECLARE_METATYPE(QVector<SqlResultSet>)
 
 // One SQL Server (MSSQL) connection. All FreeTDS db-lib calls run on a worker
@@ -46,6 +38,7 @@ class SqlSession : public QObject
     Q_PROPERTY(State state READ state NOTIFY stateChanged)
     Q_PROPERTY(int phase READ phase NOTIFY stateChanged)
     Q_PROPERTY(QString kind READ kind CONSTANT)
+    Q_PROPERTY(QString engine READ engine CONSTANT)
     Q_PROPERTY(QString title READ title CONSTANT)
     Q_PROPERTY(QString hostId READ hostId CONSTANT)
     Q_PROPERTY(QString host READ host CONSTANT)
@@ -79,12 +72,14 @@ public:
     enum Phase { PhaseIdle, PhaseConnecting, PhaseLive, PhaseBusy, PhaseEnded, PhaseFailed };
 
     SqlSession(const QString& hostId, const QString& host, int port, const QString& username,
-               const QString& database, QObject* parent = nullptr);
+               const QString& database, const QString& engine = QStringLiteral("mssql"),
+               QObject* parent = nullptr);
     ~SqlSession() override;
 
     State state() const { return m_state; }
     int phase() const;
     QString kind() const { return QStringLiteral("sql"); }
+    QString engine() const { return m_engine; }
     QString title() const { return m_title; }
     QString hostId() const { return m_hostId; }
     QString host() const { return m_host; }
@@ -160,7 +155,7 @@ private:
 
     const QString m_hostId, m_title, m_host;
     const int m_port;
-    const QString m_username, m_database;
+    const QString m_username, m_database, m_engine;
 
     State m_state = Idle;
     QString m_statusText, m_errorText, m_message;

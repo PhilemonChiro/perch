@@ -346,7 +346,7 @@ Rectangle {
         required property string username
         required property string connType
 
-        readonly property bool isSql: connType === "mssql"
+        readonly property bool isSql: connType === "mssql" || connType === "postgres"
         readonly property bool isHeader: kind === "header"
         // Hover driven by the ListView's single hovered index (reliable).
         readonly property bool rowHovered: list.hoveredIndex === row.index && !row.isHeader
@@ -444,9 +444,9 @@ Rectangle {
                 visible: !row.isHeader
                 name: row.isFolder ? "folder" : (row.isSql ? "database" : "monitor")
                 size: 15
-                // Colour tag: SQL databases in violet, RDP desktops in blue.
+                // Colour tag: SQL Server violet, PostgreSQL teal, RDP blue.
                 color: row.isFolder ? Theme.textDim
-                     : row.isSql ? Theme.sqlTag
+                     : row.isSql ? Theme.engineColor(row.connType)
                      : (row.rowHovered ? Theme.rdpTag : Theme.textDim)
                 Behavior on color { ColorAnimation { duration: Theme.fast } }
             }

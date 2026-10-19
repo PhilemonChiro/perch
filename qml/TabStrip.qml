@@ -124,7 +124,8 @@ Rectangle {
                 required property int state
                 required property string kind
                 readonly property bool active: index === root.current
-                readonly property color kc: Theme.kindColor(tab.kind)
+                readonly property color kc: (tab.kind === "sql" && tab.session)
+                    ? Theme.engineColor(tab.session.engine) : Theme.kindColor(tab.kind)
                 // Context that distinguishes two tabs to the same host: the
                 // database for SQL, the sign-in user for RDP.
                 readonly property string subtitle: {

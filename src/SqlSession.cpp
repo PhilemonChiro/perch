@@ -1,126 +1,58 @@
 #include "SqlSession.h"
 
+#include "PgBackend.h"
+#include "TdsBackend.h"
+
 #include <QElapsedTimer>
 #include <QMetaType>
 #include <QObject>
 #include <QRegularExpression>
 
-#include <sybdb.h>
-#include <sybfront.h>
+#include <memory>
 
-// db-lib's error/message callbacks are global C functions with no user context
-// except the DBPROCESS. We stash the active worker in a thread-local so the
-// handlers can route text to it — safe because every db-lib call for a given
-// connection runs on that connection's single worker thread, synchronously.
-class SqlWorker;
-
-namespace {
-
-thread_local SqlWorker* t_current = nullptr;
-
-int onDbError(DBPROCESS*, int, int dberr, int, char* dberrstr, char*);
-int onDbMessage(DBPROCESS*, DBINT msgno, int, int severity, char* msgtext, char*, char*, int);
-
-bool g_dbInited = false;
-
-} // namespace
-
-// The worker lives on its own QThread; all db-lib calls happen here.
+// The worker lives on its own QThread; all backend (db-lib / libpq) calls happen
+// here. It owns the engine backend and marshals the GUI thread's requests to it.
 class SqlWorker : public QObject
 {
     Q_OBJECT
 public:
-    ~SqlWorker() override { closeProc(); }
+    explicit SqlWorker(const QString& engine)
+    {
+        if (engine == QLatin1String("postgres"))
+            m_backend = std::make_unique<PgBackend>();
+        else
+            m_backend = std::make_unique<TdsBackend>();
+    }
 
 public slots:
     void connectTo(const QString& host, int port, const QString& user,
                    const QString& password, const QString& database)
     {
-        t_current = this;
-        m_err.clear();
-        closeProc();
-
-        if (!g_dbInited) {
-            if (dbinit() == FAIL) {
-                emit failed(QStringLiteral("Could not initialise the database driver."));
-                return;
-            }
-            dberrhandle(onDbError);
-            dbmsghandle(onDbMessage);
-            // Global (per-process) timeouts so an unreachable or wedged server
-            // can never block the worker thread indefinitely — which would in
-            // turn freeze the GUI thread when the session is torn down.
-            dbsettime(60);     // seconds to wait on any server response
-            g_dbInited = true;
-        }
-
-        // Bound the TCP login so dbopen() fails fast on an unreachable host
-        // instead of stalling on the OS default connect timeout (~75s).
-        dbsetlogintime(8);
-
-        LOGINREC* login = dblogin();
-        if (!login) {
-            emit failed(QStringLiteral("Could not allocate a login record."));
+        SqlConnectInfo info;
+        const QString err = m_backend->open(host, port, user, password, database, info);
+        if (!err.isEmpty()) {
+            emit failed(err);
             return;
         }
-        DBSETLUSER(login, user.toUtf8().constData());
-        DBSETLPWD(login, password.toUtf8().constData());
-        DBSETLAPP(login, "Perch");
-        DBSETLVERSION(login, DBVERSION_74); // SQL Server 2012+ speaks TDS 7.4.
-        if (!database.isEmpty())
-            DBSETLDBNAME(login, database.toUtf8().constData());
-
-        const QByteArray server = (host + ':' + QString::number(port)).toUtf8();
-        m_proc = dbopen(login, server.constData());
-        dbloginfree(login);
-
-        if (!m_proc) {
-            emit failed(m_err.isEmpty()
-                            ? QStringLiteral("Could not connect to %1.").arg(QString::fromUtf8(server))
-                            : m_err.trimmed());
-            return;
-        }
-        dbsetuserdata(m_proc, reinterpret_cast<BYTE*>(this));
-
-        emit connected(databaseList(), currentDb(), tableList());
+        emit connected(info.databases, info.currentDb, info.tables);
     }
 
     void switchTo(const QString& name)
     {
-        t_current = this;
-        if (!m_proc) {
-            emit switched(currentDb(), tableList());
-            return;
-        }
-        m_err.clear();
-        // Bracket-quote the identifier, doubling any closing bracket.
-        QString safe = name;
-        safe.replace(QLatin1Char(']'), QStringLiteral("]]"));
-        QStringList cols;
-        QVector<QStringList> rows;
-        int affected = -1;
-        QString err;
-        runQuery(QStringLiteral("USE [%1]").arg(safe), cols, rows, affected, err);
-        emit switched(currentDb(), tableList());
+        QString currentDb;
+        QStringList tables;
+        m_backend->switchDatabase(name, currentDb, tables);
+        emit switched(currentDb, tables);
     }
 
     void run(const QString& sql)
     {
-        t_current = this;
-        if (!m_proc) {
-            emit results({}, 0, QStringLiteral("Not connected."));
-            return;
-        }
-        m_err.clear();
         QElapsedTimer timer;
         timer.start();
-
         QVector<SqlResultSet> sets;
         QString err;
-        const bool ok = runBatch(sql, sets, err);
-        const qint64 ms = timer.elapsed();
-
-        emit results(sets, ms,
+        const bool ok = m_backend->runBatch(sql, sets, err);
+        emit results(sets, timer.elapsed(),
                      ok ? QString()
                         : (err.isEmpty() ? QStringLiteral("Query failed.") : err.trimmed()));
     }
@@ -129,33 +61,12 @@ public slots:
     // worker thread, after the result grid is already shown.
     void statsFor(const QString& table)
     {
-        t_current = this;
-        if (!m_proc) {
-            emit statsReady(table, -1, -1);
-            return;
-        }
-        m_err.clear();
-        QString esc = table;
-        esc.replace(QLatin1Char('\''), QStringLiteral("''"));
-        const QString q = QStringLiteral(
-            "SELECT CAST(SUM(CASE WHEN index_id IN (0,1) THEN row_count ELSE 0 END) AS BIGINT), "
-            "CAST(SUM(reserved_page_count) * 8 AS BIGINT) "
-            "FROM sys.dm_db_partition_stats WHERE object_id = OBJECT_ID('%1')").arg(esc);
-        QStringList cols;
-        QVector<QStringList> rows;
-        int affected = -1;
-        QString err;
-        if (runQuery(q, cols, rows, affected, err) && !rows.isEmpty() && rows.first().size() >= 2) {
-            bool ok1 = false, ok2 = false;
-            const qint64 rc = rows.first().at(0).toLongLong(&ok1);
-            const qint64 kb = rows.first().at(1).toLongLong(&ok2);
-            emit statsReady(table, ok1 ? rc : -1, ok2 ? kb : -1);
-        } else {
-            emit statsReady(table, -1, -1);
-        }
+        qint64 rowCount = -1, sizeKb = -1;
+        m_backend->stats(table, rowCount, sizeKb);
+        emit statsReady(table, rowCount, sizeKb);
     }
 
-    void shutdown() { closeProc(); }
+    void shutdown() { m_backend->close(); }
 
 signals:
     void connected(const QStringList& databases, const QString& currentDb, const QStringList& tables);
@@ -164,197 +75,15 @@ signals:
     void results(const QVector<SqlResultSet>& sets, qint64 elapsedMs, const QString& error);
     void statsReady(const QString& table, qint64 rowCount, qint64 sizeKb);
 
-public:
-    QString m_err; // appended to by the global handlers for the current call
-
 private:
-    void closeProc()
-    {
-        if (m_proc) {
-            dbclose(m_proc);
-            m_proc = nullptr;
-        }
-    }
-
-    QStringList databaseList()
-    {
-        QStringList out, cols;
-        QVector<QStringList> rows;
-        int affected = -1;
-        QString err;
-        if (runQuery(QStringLiteral("SELECT name FROM sys.databases WHERE state = 0 ORDER BY name"),
-                     cols, rows, affected, err))
-            for (const QStringList& r : rows)
-                if (!r.isEmpty())
-                    out << r.first();
-        return out;
-    }
-
-    QString currentDb()
-    {
-        QStringList cols;
-        QVector<QStringList> rows;
-        int affected = -1;
-        QString err;
-        if (runQuery(QStringLiteral("SELECT DB_NAME()"), cols, rows, affected, err)
-            && !rows.isEmpty() && !rows.first().isEmpty())
-            return rows.first().first();
-        return {};
-    }
-
-    QStringList tableList()
-    {
-        QStringList out, cols;
-        QVector<QStringList> rows;
-        int affected = -1;
-        QString err;
-        if (runQuery(QStringLiteral(
-                         "SELECT TABLE_SCHEMA + '.' + TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                         "WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') ORDER BY TABLE_SCHEMA, TABLE_NAME"),
-                     cols, rows, affected, err))
-            for (const QStringList& r : rows)
-                if (!r.isEmpty())
-                    out << r.first();
-        return out;
-    }
-
-    // Runs one SQL batch. Returns the first result set that has columns (later
-    // sets are drained), or no columns with `affected` set for a non-SELECT.
-    bool runQuery(const QString& sql, QStringList& columns, QVector<QStringList>& rows,
-                  int& affected, QString& err)
-    {
-        if (dbcmd(m_proc, sql.toUtf8().constData()) == FAIL || dbsqlexec(m_proc) == FAIL) {
-            err = m_err;
-            return false;
-        }
-        bool captured = false;
-        RETCODE rc;
-        while ((rc = dbresults(m_proc)) != NO_MORE_RESULTS) {
-            if (rc == FAIL) {
-                err = m_err;
-                return false;
-            }
-            const int ncols = dbnumcols(m_proc);
-            if (ncols > 0 && !captured) {
-                for (int c = 1; c <= ncols; ++c)
-                    columns << QString::fromUtf8(dbcolname(m_proc, c));
-                while (dbnextrow(m_proc) != NO_MORE_ROWS) {
-                    QStringList row;
-                    row.reserve(ncols);
-                    for (int c = 1; c <= ncols; ++c)
-                        row << cell(c);
-                    rows << row;
-                }
-                captured = true;
-            } else {
-                while (dbnextrow(m_proc) != NO_MORE_ROWS) { }
-            }
-            const DBINT n = DBCOUNT(m_proc);
-            if (n >= 0)
-                affected = int(n);
-        }
-        return true;
-    }
-
-    // Runs a batch and captures every result set it produces (each SELECT yields
-    // one; non-row statements yield a column-less set carrying the affected count).
-    bool runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err)
-    {
-        if (dbcmd(m_proc, sql.toUtf8().constData()) == FAIL || dbsqlexec(m_proc) == FAIL) {
-            err = m_err;
-            return false;
-        }
-        RETCODE rc;
-        while ((rc = dbresults(m_proc)) != NO_MORE_RESULTS) {
-            if (rc == FAIL) {
-                err = m_err;
-                return false;
-            }
-            const int ncols = dbnumcols(m_proc);
-            SqlResultSet set;
-            if (ncols > 0) {
-                for (int c = 1; c <= ncols; ++c)
-                    set.columns << QString::fromUtf8(dbcolname(m_proc, c));
-                while (dbnextrow(m_proc) != NO_MORE_ROWS) {
-                    QStringList row;
-                    row.reserve(ncols);
-                    for (int c = 1; c <= ncols; ++c)
-                        row << cell(c);
-                    set.rows << row;
-                }
-            } else {
-                while (dbnextrow(m_proc) != NO_MORE_ROWS) { }
-            }
-            const DBINT n = DBCOUNT(m_proc);
-            set.affected = n >= 0 ? int(n) : -1;
-            sets << set;
-        }
-        return true;
-    }
-
-    // Converts the current row's column `c` to text; a true SQL NULL becomes a
-    // null QString (rendered as "NULL" by the view).
-    QString cell(int c)
-    {
-        BYTE* src = dbdata(m_proc, c);
-        const DBINT len = dbdatlen(m_proc, c);
-        if (!src)
-            return {}; // SQL NULL
-        if (len == 0)
-            return QString(QLatin1String("")); // empty string, not NULL
-        const int coltype = dbcoltype(m_proc, c);
-        QByteArray buf(int(len) * 2 + 256, '\0');
-        const DBINT n = dbconvert(m_proc, coltype, src, len, SYBCHAR,
-                                  reinterpret_cast<BYTE*>(buf.data()), -1);
-        if (n < 0)
-            return QStringLiteral("<?>");
-        return QString::fromUtf8(buf.constData());
-    }
-
-    DBPROCESS* m_proc = nullptr;
+    std::unique_ptr<SqlBackend> m_backend;
 };
-
-namespace {
-
-int onDbError(DBPROCESS* proc, int, int dberr, int, char* dberrstr, char*)
-{
-    SqlWorker* w = t_current;
-    if (proc)
-        if (BYTE* u = dbgetuserdata(proc))
-            w = reinterpret_cast<SqlWorker*>(u);
-    if (w && dberrstr && *dberrstr) {
-        if (!w->m_err.isEmpty())
-            w->m_err += QLatin1Char('\n');
-        w->m_err += QString::fromUtf8(dberrstr);
-    }
-    Q_UNUSED(dberr);
-    return INT_CANCEL;
-}
-
-int onDbMessage(DBPROCESS* proc, DBINT msgno, int, int severity, char* msgtext, char*, char*, int)
-{
-    // Severity > 10 is a real error; lower is informational.
-    if (severity > 10 && msgtext && *msgtext) {
-        SqlWorker* w = t_current;
-        if (proc)
-            if (BYTE* u = dbgetuserdata(proc))
-                w = reinterpret_cast<SqlWorker*>(u);
-        if (w) {
-            if (!w->m_err.isEmpty())
-                w->m_err += QLatin1Char('\n');
-            w->m_err += QString::fromUtf8(msgtext);
-        }
-    }
-    Q_UNUSED(msgno);
-    return 0;
-}
-
-} // namespace
 
 // ---- SqlSession (GUI thread) ----
 
 SqlSession::SqlSession(const QString& hostId, const QString& host, int port,
-                       const QString& username, const QString& database, QObject* parent)
+                       const QString& username, const QString& database,
+                       const QString& engine, QObject* parent)
     : QObject(parent)
     , m_hostId(hostId)
     , m_title(host)
@@ -362,6 +91,8 @@ SqlSession::SqlSession(const QString& hostId, const QString& host, int port,
     , m_port(port)
     , m_username(username)
     , m_database(database)
+    , m_engine(engine == QLatin1String("postgres") ? QStringLiteral("postgres")
+                                                    : QStringLiteral("mssql"))
     , m_currentDatabase(database)
     , m_result(new SqlResultModel(this))
 {
@@ -378,7 +109,7 @@ SqlSession::SqlSession(const QString& hostId, const QString& host, int port,
         }
     });
 
-    m_worker = new SqlWorker;
+    m_worker = new SqlWorker(m_engine);
     m_worker->moveToThread(&m_thread);
     connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
     connect(this, &SqlSession::doConnect, m_worker, &SqlWorker::connectTo);

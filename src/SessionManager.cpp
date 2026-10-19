@@ -119,7 +119,8 @@ int SessionManager::openHost(const QString& hostId)
     const QVariantMap h = ConnectionStore::instance()->host(hostId);
     if (h.isEmpty())
         return -1;
-    if (h.value("type").toString() == QLatin1String("mssql"))
+    if (const QString t = h.value("type").toString();
+        t == QLatin1String("mssql") || t == QLatin1String("postgres"))
         return openDatabaseHost(hostId);
     // A connection may reference a saved credential set; otherwise it uses its
     // own inline username/domain with the password stored under the host id.
@@ -229,9 +230,14 @@ int SessionManager::openDatabaseHost(const QString& hostId)
     const QVariantMap h = ConnectionStore::instance()->host(hostId);
     if (h.isEmpty())
         return -1;
-    const int port = h.value("port").toInt() > 0 ? h.value("port").toInt() : 1433;
+    const QString engine = h.value("type").toString() == QLatin1String("postgres")
+                               ? QStringLiteral("postgres")
+                               : QStringLiteral("mssql");
+    const int defPort = engine == QLatin1String("postgres") ? 5432 : 1433;
+    const int port = h.value("port").toInt() > 0 ? h.value("port").toInt() : defPort;
     auto* s = new SqlSession(hostId, h.value("host").toString(), port,
-                             h.value("username").toString(), h.value("database").toString(), this);
+                             h.value("username").toString(), h.value("database").toString(),
+                             engine, this);
     const int row = add(s);
     // Auto-connect with a remembered keychain password, if one is stored.
     QPointer<SqlSession> guard(s);
@@ -245,8 +251,15 @@ int SessionManager::openDatabaseHost(const QString& hostId)
 int SessionManager::quickConnectDatabase(const QString& text)
 {
     QString rest = text.trimmed();
-    rest.remove(QRegularExpression(QStringLiteral("^(mssql|sql)://"),
-                                   QRegularExpression::CaseInsensitiveOption));
+    static const QRegularExpression scheme(QStringLiteral("^(postgres|postgresql|pg|mssql|sql)://"),
+                                           QRegularExpression::CaseInsensitiveOption);
+    const auto sm = scheme.match(rest);
+    const QString engine = (sm.hasMatch()
+                            && sm.captured(1).compare(QLatin1String("mssql"), Qt::CaseInsensitive) != 0
+                            && sm.captured(1).compare(QLatin1String("sql"), Qt::CaseInsensitive) != 0)
+                               ? QStringLiteral("postgres")
+                               : QStringLiteral("mssql");
+    rest.remove(scheme);
     QString user, database;
     if (const int at = rest.indexOf(QLatin1Char('@')); at >= 0) {
         user = rest.left(at);
@@ -257,7 +270,7 @@ int SessionManager::quickConnectDatabase(const QString& text)
         rest = rest.left(slash);
     }
     QString host = rest;
-    int port = 1433;
+    int port = engine == QLatin1String("postgres") ? 5432 : 1433;
     if (const int colon = rest.lastIndexOf(QLatin1Char(':')); colon >= 0) {
         host = rest.left(colon);
         if (const int p = rest.mid(colon + 1).toInt(); p > 0)
@@ -265,7 +278,7 @@ int SessionManager::quickConnectDatabase(const QString& text)
     }
     if (host.isEmpty())
         return -1;
-    auto* s = new SqlSession(QString(), host, port, user, database, this);
+    auto* s = new SqlSession(QString(), host, port, user, database, engine, this);
     return add(s);
 }
 

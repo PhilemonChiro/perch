@@ -26,8 +26,10 @@ Popup {
     readonly property bool editing: editId !== ""
     property string sharePath: ""
     property string credentialId: ""
-    property string connType: "rdp"   // "rdp" | "mssql"
-    readonly property bool isSql: connType === "mssql"
+    property string connType: "rdp"   // "rdp" | "mssql" | "postgres"
+    readonly property bool isSql: connType === "mssql" || connType === "postgres"
+    readonly property string defPort: connType === "postgres" ? "5432"
+                                    : connType === "mssql" ? "1433" : "3389"
     signal manageCredentials(bool addNew)
 
     function reset() {
@@ -44,8 +46,9 @@ Popup {
     // the old default.
     function setType(t) {
         if (connType === t) return
-        if (portF.text === (isSql ? "1433" : "3389") || portF.text === "")
-            portF.text = (t === "mssql") ? "1433" : "3389"
+        // Move the port to the new type's default if it's still the old default.
+        if (portF.text === defPort || portF.text === "")
+            portF.text = t === "postgres" ? "5432" : t === "mssql" ? "1433" : "3389"
         connType = t
     }
     function openNew(folder) {
@@ -58,7 +61,7 @@ Popup {
         const h = ConnectionStore.host(id)
         if (!h.id) return
         editId = id; reset()
-        connType = (h.type === "mssql") ? "mssql" : "rdp"
+        connType = h.type === "mssql" ? "mssql" : h.type === "postgres" ? "postgres" : "rdp"
         nameF.text = h.name === h.host ? "" : h.name
         hostF.text = h.host; portF.text = String(h.port)
         userF.text = h.username || ""
@@ -178,18 +181,21 @@ Popup {
                     visible: !root.editing
                     spacing: 6
                     Text { text: qsTr("Type"); color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.Medium }
-                    Row {
+                    RowLayout {
+                        Layout.fillWidth: true
                         spacing: 8
                         Repeater {
                             model: [
                                 { t: "rdp", label: qsTr("Remote Desktop"), icon: "monitor", col: Theme.rdpTag },
-                                { t: "mssql", label: qsTr("SQL Server"), icon: "database", col: Theme.sqlTag }
+                                { t: "mssql", label: qsTr("SQL Server"), icon: "database", col: Theme.sqlTag },
+                                { t: "postgres", label: qsTr("PostgreSQL"), icon: "database", col: Theme.pgTag }
                             ]
                             delegate: AbstractButton {
                                 required property var modelData
                                 readonly property bool sel: root.connType === modelData.t
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 1
                                 implicitHeight: 38
-                                implicitWidth: 168
                                 hoverEnabled: true
                                 focusPolicy: Qt.NoFocus
                                 onClicked: root.setType(modelData.t)
@@ -202,14 +208,16 @@ Popup {
                                     Behavior on color { ColorAnimation { duration: Theme.fast } }
                                 }
                                 contentItem: RowLayout {
-                                    spacing: 9
-                                    Icon { Layout.leftMargin: 12; name: modelData.icon; size: 16; color: sel ? modelData.col : Theme.textDim }
+                                    spacing: 8
+                                    Icon { Layout.leftMargin: 11; name: modelData.icon; size: 16; color: sel ? modelData.col : Theme.textDim }
                                     Text {
                                         Layout.fillWidth: true
+                                        Layout.rightMargin: 6
                                         text: modelData.label
                                         color: sel ? Theme.text : Theme.textDim
                                         font.pixelSize: Theme.fontMd
                                         font.weight: sel ? Font.Medium : Font.Normal
+                                        elide: Text.ElideRight
                                     }
                                 }
                             }
@@ -224,7 +232,7 @@ Popup {
                     Layout.fillWidth: true
                     spacing: 12
                     Field { id: nameF; Layout.fillWidth: true; label: qsTr("Display name"); placeholder: qsTr("Optional"); onAccepted: root.save(false) }
-                    Field { id: portF; Layout.preferredWidth: 96; label: qsTr("Port"); placeholder: root.isSql ? "1433" : "3389"; mono: true
+                    Field { id: portF; Layout.preferredWidth: 96; label: qsTr("Port"); placeholder: root.defPort; mono: true
                         input.validator: IntValidator { bottom: 1; top: 65535 }
                         onAccepted: root.save(false) }
                 }

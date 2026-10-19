@@ -25,6 +25,22 @@ if(NOT FREETDS_INCLUDE_DIR OR NOT FREETDS_LIBRARY)
     message(FATAL_ERROR "FreeTDS (sybdb.h / libsybdb) not found; install freetds")
 endif()
 
+# libpq powers the PostgreSQL connector. Homebrew keeps it keg-only, so hint its
+# opt prefix alongside the usual system and vcpkg locations.
+find_path(LIBPQ_INCLUDE_DIR NAMES libpq-fe.h
+    HINTS /opt/homebrew/opt/libpq/include /usr/local/opt/libpq/include
+          /opt/homebrew/opt/postgresql/include /usr/local/opt/postgresql/include
+          /usr/include /usr/include/postgresql /usr/local/include
+          $ENV{VCPKG_INSTALLATION_ROOT}/installed/x64-windows/include)
+find_library(LIBPQ_LIBRARY NAMES pq libpq
+    HINTS /opt/homebrew/opt/libpq/lib /usr/local/opt/libpq/lib
+          /opt/homebrew/opt/postgresql/lib /usr/local/opt/postgresql/lib
+          /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+          $ENV{VCPKG_INSTALLATION_ROOT}/installed/x64-windows/lib)
+if(NOT LIBPQ_INCLUDE_DIR OR NOT LIBPQ_LIBRARY)
+    message(FATAL_ERROR "libpq (libpq-fe.h / libpq) not found; install libpq or postgresql")
+endif()
+
 qt_standard_project_setup(REQUIRES 6.9)
 
 qt_add_executable(relay WIN32 MACOSX_BUNDLE
@@ -48,6 +64,9 @@ qt_add_qml_module(relay
         src/SqlResultModel.h
         src/SqlHighlighter.h
         src/Clipboard.h
+        src/SqlBackend.h
+        src/TdsBackend.h src/TdsBackend.cpp
+        src/PgBackend.h src/PgBackend.cpp
         src/SqlSession.h src/SqlSession.cpp
         src/QueryStore.h src/QueryStore.cpp
         src/UpdateChecker.h src/UpdateChecker.cpp
@@ -78,7 +97,7 @@ qt_add_qml_module(relay
     RESOURCES ${RELAY_ICONS}
 )
 
-target_include_directories(relay PRIVATE src ${FREETDS_INCLUDE_DIR})
+target_include_directories(relay PRIVATE src ${FREETDS_INCLUDE_DIR} ${LIBPQ_INCLUDE_DIR})
 
 # App version (for the in-app update check) and the GitHub repo to query.
 target_compile_definitions(relay PRIVATE
@@ -96,6 +115,7 @@ target_link_libraries(relay PRIVATE
     Qt6Keychain::Qt6Keychain
     winpr freerdp freerdp-client
     ${FREETDS_LIBRARY}
+    ${LIBPQ_LIBRARY}
 )
 
 # The output binary is "Perch". (The QML module dir is "Relay", so there is no

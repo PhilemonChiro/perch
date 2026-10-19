@@ -203,7 +203,7 @@ void ConnectionStore::appendChildren(QList<Row>& rows, const QString& parentId, 
     if (m_groupByType && parentId.isEmpty() && m_typeFilter.isEmpty()) {
         QList<int> rdp, sql;
         for (int i : hosts)
-            (m_hosts[i].type == QLatin1String("mssql") ? sql : rdp) << i;
+            (m_hosts[i].type == QLatin1String("rdp") ? rdp : sql) << i;
         if (!rdp.isEmpty()) {
             rows.append({false, 0, depth, QStringLiteral("hdr:rdp"), true, QStringLiteral("rdp")});
             for (int i : rdp)
@@ -304,7 +304,9 @@ void ConnectionStore::load()
         h.host = o.value("host").toString();
         h.type = o.value("type").toString(QStringLiteral("rdp"));
         h.database = o.value("database").toString();
-        h.port = o.value("port").toInt(h.type == QLatin1String("mssql") ? 1433 : 3389);
+        const int loadDefPort = h.type == QLatin1String("postgres") ? 5432
+                              : h.type == QLatin1String("mssql") ? 1433 : 3389;
+        h.port = o.value("port").toInt(loadDefPort);
         h.username = o.value("username").toString();
         h.domain = o.value("domain").toString();
         h.folderId = o.value("folderId").toString();
@@ -423,10 +425,13 @@ QString ConnectionStore::saveHost(const QVariantMap& m)
     Host& h = m_hosts[i];
     h.name = m.value("name").toString().trimmed();
     h.host = m.value("host").toString().trimmed();
-    h.type = m.value("type").toString() == QLatin1String("mssql") ? QStringLiteral("mssql")
-                                                                   : QStringLiteral("rdp");
+    const QString reqType = m.value("type").toString();
+    h.type = reqType == QLatin1String("mssql") ? QStringLiteral("mssql")
+           : reqType == QLatin1String("postgres") ? QStringLiteral("postgres")
+                                                   : QStringLiteral("rdp");
     h.database = m.value("database").toString().trimmed();
-    const int defPort = h.type == QLatin1String("mssql") ? 1433 : 3389;
+    const int defPort = h.type == QLatin1String("postgres") ? 5432
+                      : h.type == QLatin1String("mssql") ? 1433 : 3389;
     h.port = m.value("port", defPort).toInt();
     if (h.port <= 0 || h.port > 65535)
         h.port = defPort;

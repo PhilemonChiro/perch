@@ -27,9 +27,10 @@ ApplicationWindow {
     function toast(msg, kind) { toaster.show(msg, kind) }
     function closeTab(i) { if (i >= 0) SessionManager.close(i) }
 
-    // A quick-connect string beginning mssql:// (or sql://) opens a SQL Server
-    // console window instead of an RDP session.
-    function isDbTarget(text) { return /^\s*(mssql|sql):\/\//i.test(text) }
+    // A quick-connect string beginning mssql:// / sql:// (SQL Server) or
+    // postgres:// / postgresql:// / pg:// (PostgreSQL) opens a database console
+    // window instead of an RDP session.
+    function isDbTarget(text) { return /^\s*(mssql|sql|postgres|postgresql|pg):\/\//i.test(text) }
     function openDb(text) { return SessionManager.quickConnectDatabase(text) >= 0 }
     // Routes a quick-connect string to either the DB console or an RDP session.
     function quickConnect(text) {

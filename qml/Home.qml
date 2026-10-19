@@ -21,8 +21,8 @@ Item {
     // Recents split into typed groups (only non-empty groups are shown).
     readonly property var recentGroups: {
         const r = root.recents
-        const servers = r.filter(x => x.type !== "mssql")
-        const dbs = r.filter(x => x.type === "mssql")
+        const servers = r.filter(x => x.type === "rdp" || !x.type)
+        const dbs = r.filter(x => x.type === "mssql" || x.type === "postgres")
         const out = []
         if (servers.length) out.push({ title: qsTr("Remote desktops"), icon: "monitor",
                                        color: Theme.kindColor("rdp"), items: servers })
@@ -188,8 +188,8 @@ Item {
         id: card
         property var data_
         property int delay: 0
-        readonly property bool isSql: card.data_ && card.data_.type === "mssql"
-        readonly property color kc: Theme.kindColor(card.isSql ? "sql" : "rdp")
+        readonly property bool isSql: card.data_ && (card.data_.type === "mssql" || card.data_.type === "postgres")
+        readonly property color kc: card.isSql ? Theme.engineColor(card.data_.type) : Theme.kindColor("rdp")
         implicitHeight: 96
         hoverEnabled: true
         focusPolicy: Qt.NoFocus
@@ -276,7 +276,7 @@ Item {
                     color: Qt.rgba(card.kc.r, card.kc.g, card.kc.b, Theme.dark ? 0.14 : 0.10)
                     Text {
                         id: tag; anchors.centerIn: parent
-                        text: card.isSql ? qsTr("SQL") : qsTr("RDP")
+                        text: card.isSql ? Theme.engineLabel(card.data_.type) : qsTr("RDP")
                         color: card.kc; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
                         font.letterSpacing: 0.4
                     }

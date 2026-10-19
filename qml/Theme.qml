@@ -105,8 +105,15 @@ QtObject {
 
     // Colour tag per connection kind: RDP desktops vs SQL databases.
     readonly property color rdpTag: accent               // blue
-    readonly property color sqlTag: dark ? "#C99BFF" : "#8A4FD6"  // violet
+    readonly property color sqlTag: dark ? "#C99BFF" : "#8A4FD6"  // violet (SQL Server)
+    readonly property color pgTag:  dark ? "#5FC2A8" : "#1F8C6E"  // teal (PostgreSQL)
     function kindColor(kind) { return kind === "sql" ? sqlTag : rdpTag }
+    // Per-engine tag colour and short label for the two database engines; any
+    // non-database type falls back to the RDP tone.
+    function engineColor(type) {
+        return type === "postgres" ? pgTag : type === "mssql" ? sqlTag : rdpTag
+    }
+    function engineLabel(type) { return type === "postgres" ? "PG" : "SQL" }
 
     // Shared lifecycle phase colour (0 idle,1 connecting,2 live,3 busy,4 ended,5 failed).
     function phaseColor(phase) {
