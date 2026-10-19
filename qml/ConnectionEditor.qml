@@ -182,7 +182,7 @@ Popup {
                     spacing: 6
                     Text { text: qsTr("Type"); color: Theme.textDim; font.pixelSize: Theme.fontSm; font.weight: Font.Medium }
                     RowLayout {
-                        Layout.fillWidth: true
+                        width: parent.width
                         spacing: 8
                         Repeater {
                             model: [
