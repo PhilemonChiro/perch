@@ -94,7 +94,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\vcpkg\installed
-          key: vcpkg-${{ matrix.os }}-freerdp-v1
+          key: vcpkg-${{ matrix.os }}-freerdp-freetds-libpq-v2
 
       - name: FreeRDP (Windows, vcpkg)
         if: runner.os == 'Windows'
