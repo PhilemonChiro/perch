@@ -47,7 +47,7 @@ jobs:
         run: |
           brew untap --force homebrew/core homebrew/cask 2>/dev/null || true
           rm -rf "$(brew --cache)/api" ~/Library/Caches/Homebrew/api 2>/dev/null || true
-          brew install freerdp ninja
+          brew install freerdp freetds libpq ninja
           brew list --versions freerdp
 
       # Cache the from-source FreeRDP install so it is rebuilt only when the
@@ -71,7 +71,8 @@ jobs:
             libx11-dev libxext-dev libxcursor-dev libxkbcommon-dev libxkbfile-dev \
             libxrandr-dev libxi-dev libxfixes-dev libxdamage-dev libxrender-dev \
             libxinerama-dev libfuse2 \
-            libkrb5-dev libcjson-dev liburiparser-dev
+            libkrb5-dev libcjson-dev liburiparser-dev \
+            freetds-dev libpq-dev
           if ls "$RUNNER_TEMP"/deps/lib*/libfreerdp3.so* >/dev/null 2>&1; then
             echo "FreeRDP $FREERDP_VERSION restored from cache; skipping build"
           else
@@ -99,7 +100,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install freerdp:x64-windows
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install freerdp:x64-windows freetds:x64-windows libpq:x64-windows
           "CMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" >> $env:GITHUB_ENV
 
       - uses: ilammy/msvc-dev-cmd@v1
