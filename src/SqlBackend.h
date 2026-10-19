@@ -53,6 +53,10 @@ public:
     // cannot change database on a live connection, reopens.
     virtual void switchDatabase(const QString& name, QString& currentDb, QVariantList& objects) = 0;
 
+    // Re-reads the object browser list for the current database without changing
+    // it — the manual "refresh" after the schema changes. No-op if not open.
+    virtual void refreshObjects(QVariantList& objects) = 0;
+
     // Fast metadata stats (no table scan) for one "schema.table"; each is -1
     // when unavailable.
     virtual void stats(const QString& table, qint64& rowCount, qint64& sizeKb) = 0;

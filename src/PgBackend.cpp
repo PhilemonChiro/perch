@@ -131,19 +131,27 @@ QVariantList PgBackend::objectList()
     QVariantList out;
     if (!m_conn)
         return out;
+    // Read the catalog tables directly rather than information_schema, whose
+    // views (routines especially) join many tables and are markedly slower on a
+    // database with many objects.
     const QString sql = QStringLiteral(
-        "SELECT name, typ FROM ("
-        "  SELECT table_schema || '.' || table_name AS name, "
-        "         CASE table_type WHEN 'VIEW' THEN 'view' ELSE 'table' END AS typ, "
-        "         CASE table_type WHEN 'VIEW' THEN 1 ELSE 0 END AS ord "
-        "  FROM information_schema.tables "
-        "  WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
+        "SELECT name, typ, args FROM ("
+        "  SELECT n.nspname || '.' || c.relname AS name, "
+        "         CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'view' ELSE 'table' END AS typ, "
+        "         '' AS args, "
+        "         CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 ELSE 0 END AS ord "
+        "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "  WHERE c.relkind IN ('r', 'p', 'v', 'm') "
+        "    AND n.nspname NOT IN ('pg_catalog', 'information_schema') "
+        "    AND n.nspname NOT LIKE 'pg_temp%' AND n.nspname NOT LIKE 'pg_toast%' "
         "  UNION ALL "
-        "  SELECT routine_schema || '.' || routine_name, "
-        "         CASE routine_type WHEN 'PROCEDURE' THEN 'procedure' ELSE 'function' END, "
-        "         CASE routine_type WHEN 'PROCEDURE' THEN 2 ELSE 3 END "
-        "  FROM information_schema.routines "
-        "  WHERE routine_schema NOT IN ('pg_catalog', 'information_schema')"
+        "  SELECT n.nspname || '.' || p.proname, "
+        "         CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END, "
+        "         pg_get_function_arguments(p.oid), "
+        "         CASE p.prokind WHEN 'p' THEN 2 ELSE 3 END "
+        "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+        "  WHERE p.prokind IN ('f', 'p') "
+        "    AND n.nspname NOT IN ('pg_catalog', 'information_schema')"
         ") q ORDER BY ord, name");
     PGresult* res = PQexec(m_conn, sql.toUtf8().constData());
     if (res && PQresultStatus(res) == PGRES_TUPLES_OK) {
@@ -152,7 +160,8 @@ QVariantList PgBackend::objectList()
             if (!PQgetisnull(res, r, 0))
                 out.append(QVariantMap{
                     { QStringLiteral("name"), QString::fromUtf8(PQgetvalue(res, r, 0)) },
-                    { QStringLiteral("type"), QString::fromUtf8(PQgetvalue(res, r, 1)) } });
+                    { QStringLiteral("type"), QString::fromUtf8(PQgetvalue(res, r, 1)) },
+                    { QStringLiteral("args"), QString::fromUtf8(PQgetvalue(res, r, 2)) } });
     }
     if (res)
         PQclear(res);

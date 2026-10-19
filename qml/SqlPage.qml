@@ -415,13 +415,44 @@ Item {
                     anchors.fill: parent
                     spacing: 0
 
+                    id: browserCol
                     readonly property var filteredObjects: {
                         const all = sessionObj ? sessionObj.objects : []
                         const q = tableSearch.text.trim().toLowerCase()
                         return q === "" ? all : all.filter(o => o.name.toLowerCase().indexOf(q) !== -1)
                     }
-                    // Flattened rows: a group header followed by its objects, in
-                    // the order Tables, Views, Procedures, Functions.
+                    readonly property bool searching: tableSearch.text.trim() !== ""
+                    // Groups start collapsed ("folders"); a filter force-expands all
+                    // so matches are visible without clicking.
+                    property var collapsed: ({ table: true, view: true, procedure: true, function: true })
+                    function toggleGroup(t) {
+                        const c = {}
+                        for (const k in collapsed) c[k] = collapsed[k]
+                        c[t] = !(collapsed[t] === true)
+                        collapsed = c
+                    }
+                    // Most-recently-opened objects (session-scoped), newest first.
+                    property var recents: []
+                    function pushRecent(name, type, args) {
+                        const r = recents.filter(o => o.name !== name)
+                        r.unshift({ name: name, type: type, args: args || "" })
+                        recents = r.slice(0, 6)
+                    }
+                    // pgAdmin-style per-type glyph and colour, shared by the group
+                    // folder and its object rows.
+                    function typeIcon(t) {
+                        return t === "view" ? "view"
+                             : t === "procedure" ? "procedure"
+                             : t === "function" ? "function" : "table"
+                    }
+                    function typeColor(t) {
+                        return t === "view" ? Theme.accent
+                             : t === "procedure" ? Theme.warning
+                             : t === "function" ? Theme.accent2
+                             : (sessionObj ? Theme.engineColor(sessionObj.engine) : Theme.sqlTag)
+                    }
+                    // Flattened rows: a group header followed (when expanded) by its
+                    // objects, in the order Tables, Views, Procedures, Functions.
                     readonly property var objectRows: {
                         const order = ["table", "view", "procedure", "function"]
                         const labels = { table: qsTr("Tables"), view: qsTr("Views"),
@@ -430,25 +461,58 @@ Item {
                         for (const t of order) {
                             const items = filteredObjects.filter(o => o.type === t)
                             if (!items.length) continue
-                            rows.push({ header: true, label: labels[t], count: items.length })
-                            for (const it of items) rows.push({ header: false, name: it.name, type: it.type })
+                            const open = searching || !(collapsed[t] === true)
+                            rows.push({ header: true, firstHeader: rows.length === 0, type: t,
+                                        label: labels[t], count: items.length, open: open })
+                            if (open)
+                                for (const it of items)
+                                    rows.push({ header: false, name: it.name, type: it.type, args: it.args })
                         }
                         return rows
                     }
 
                     RowLayout {
                         Layout.fillWidth: true
-                        Layout.margins: 14
-                        Layout.bottomMargin: 6
+                        Layout.leftMargin: 14; Layout.rightMargin: 10
+                        Layout.topMargin: 14; Layout.bottomMargin: 8
+                        spacing: 6
                         Text {
                             Layout.fillWidth: true
                             text: qsTr("OBJECTS")
                             color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
-                            font.letterSpacing: 0.6
+                            font.letterSpacing: 0.8
                         }
                         Text {
-                            text: parent.parent.filteredObjects.length + (sessionObj && tableSearch.text ? "/" + sessionObj.objects.length : "")
+                            visible: sessionObj && tableSearch.text !== ""
+                            text: parent.parent.filteredObjects.length + " found"
                             color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                        }
+                        // Re-read the object list after the schema changes.
+                        Rectangle {
+                            id: refreshBtn
+                            implicitWidth: 24; implicitHeight: 24
+                            radius: Theme.radius
+                            color: refreshHover.hovered ? Theme.hover : "transparent"
+                            opacity: page.live ? 1 : 0.35
+                            enabled: opacity === 1
+                            Behavior on color { ColorAnimation { duration: Theme.fast } }
+                            Icon {
+                                anchors.centerIn: parent
+                                name: "refresh"; size: 14
+                                color: refreshHover.hovered ? Theme.text : Theme.textFaint
+                                NumberAnimation on rotation {
+                                    id: spin; running: false; from: 0; to: 360
+                                    duration: 500; easing.type: Easing.OutCubic
+                                }
+                            }
+                            HoverHandler { id: refreshHover; enabled: refreshBtn.enabled }
+                            TapHandler {
+                                enabled: refreshBtn.enabled
+                                onTapped: { if (sessionObj) sessionObj.refreshObjects(); spin.restart() }
+                            }
+                            ToolTip.visible: refreshHover.hovered
+                            ToolTip.text: qsTr("Refresh objects")
+                            ToolTip.delay: 500
                         }
                     }
                     // Object filter.
@@ -495,19 +559,55 @@ Item {
                         // Opens an object with the action that fits its type: run a
                         // SELECT for tables/views, or stage a call template for a
                         // procedure/function (never auto-run — a proc may write).
-                        function openObject(name, type) {
+                        // Splits a routine signature into individual args on the
+                        // top-level commas only (ignoring commas inside type parens
+                        // like numeric(10,2)).
+                        function splitArgs(sig) {
+                            const s = (sig || "").trim()
+                            if (s === "") return []
+                            const parts = []
+                            let depth = 0, start = 0
+                            for (let i = 0; i < s.length; ++i) {
+                                const ch = s[i]
+                                if (ch === "(" || ch === "[") depth++
+                                else if (ch === ")" || ch === "]") depth--
+                                else if (ch === "," && depth === 0) { parts.push(s.slice(start, i).trim()); start = i + 1 }
+                            }
+                            parts.push(s.slice(start).trim())
+                            return parts.filter(p => p !== "")
+                        }
+
+                        function openObject(name, type, args) {
+                            browserCol.pushRecent(name, type, args)
                             const isPg = sessionObj && sessionObj.engine === "postgres"
                             if (type === "table" || type === "view") {
                                 editor.text = isPg ? ("SELECT * FROM " + name + " LIMIT 100")
                                                    : ("SELECT TOP 100 * FROM " + name)
                                 page.run()
-                            } else if (type === "procedure") {
-                                editor.text = isPg ? ("CALL " + name + "();") : ("EXEC " + name + ";")
-                                editor.forceActiveFocus()
-                            } else {
-                                editor.text = "SELECT * FROM " + name + "();"
-                                editor.forceActiveFocus()
+                                return
                             }
+                            // Procedure/function: stage a call skeleton (never auto-run —
+                            // it may write). One NULL placeholder per parameter so the call
+                            // has the right shape; each line names the arg to fill in.
+                            const parts = splitArgs(args)
+                            if (type === "procedure" && !isPg) {
+                                // SQL Server: EXEC with named parameters.
+                                if (!parts.length) editor.text = "EXEC " + name + ";"
+                                else {
+                                    const body = parts.map((p, i) =>
+                                        (i ? "  , " : "    ") + p.split(/\s+/)[0] + " = NULL  -- " + p).join("\n")
+                                    editor.text = "EXEC " + name + "\n" + body + ";"
+                                }
+                            } else {
+                                const verb = type === "procedure" ? "CALL " : "SELECT * FROM "
+                                if (!parts.length) editor.text = verb + name + "();"
+                                else {
+                                    const body = parts.map((p, i) =>
+                                        (i ? "  , " : "    ") + "NULL  -- " + p).join("\n")
+                                    editor.text = verb + name + "(\n" + body + "\n);"
+                                }
+                            }
+                            editor.forceActiveFocus()
                         }
 
                         delegate: Item {
@@ -515,33 +615,59 @@ Item {
                             required property int index
                             required property var modelData
                             width: tablesList.width
-                            height: modelData.header ? 26 : 30
+                            height: modelData.header ? (modelData.firstHeader ? 30 : 34) : 28
 
-                            // Group header row.
-                            RowLayout {
+                            // Group header row — click to expand/collapse.
+                            ItemDelegate {
+                                id: groupRow
                                 visible: tbd.modelData.header
                                 anchors.fill: parent
-                                anchors.leftMargin: 14; anchors.rightMargin: 14
-                                anchors.topMargin: 6
-                                spacing: 6
-                                Text {
-                                    text: tbd.modelData.label || ""
-                                    color: Theme.textFaint; font.pixelSize: Theme.fontXs
-                                    font.weight: Font.DemiBold; font.letterSpacing: 0.4
+                                anchors.topMargin: tbd.modelData.firstHeader ? 0 : 6
+                                enabled: !browserCol.searching
+                                hoverEnabled: true
+                                background: Rectangle {
+                                    radius: Theme.radius
+                                    anchors.leftMargin: 8; anchors.rightMargin: 8
+                                    anchors.fill: parent
+                                    color: groupRow.hovered ? Theme.hover : "transparent"
+                                    Behavior on color { ColorAnimation { duration: Theme.fast } }
                                 }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; opacity: 0.6 }
-                                Text {
-                                    text: tbd.modelData.count || ""
-                                    color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                                contentItem: RowLayout {
+                                    anchors.fill: parent
+                                    spacing: 7
+                                    Icon {
+                                        Layout.leftMargin: 12
+                                        name: "chevron"; size: 12
+                                        color: groupRow.hovered ? Theme.text : Theme.textDim
+                                        rotation: tbd.modelData.open ? 90 : 0
+                                        Behavior on rotation { NumberAnimation { duration: Theme.fast; easing.type: Easing.OutCubic } }
+                                    }
+                                    Icon {
+                                        name: tbd.modelData.open ? "folder-open" : "folder"; size: 15
+                                        color: groupRow.hovered ? Theme.text : Theme.textDim
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: tbd.modelData.label || ""
+                                        color: Theme.text; font.pixelSize: Theme.fontSm
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Text {
+                                        Layout.rightMargin: 16
+                                        text: tbd.modelData.count || ""
+                                        color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                                    }
                                 }
+                                onClicked: browserCol.toggleGroup(tbd.modelData.type)
                             }
 
                             // Object row.
                             ItemDelegate {
+                                id: leafRow
                                 visible: !tbd.modelData.header
                                 anchors.fill: parent
                                 readonly property string objType: tbd.modelData.type || "table"
-                                readonly property bool isRoutine: objType === "procedure" || objType === "function"
+                                readonly property bool hov: tablesList.hoveredIndex === tbd.index
                                 HoverHandler {
                                     onHoveredChanged: {
                                         if (hovered) tablesList.hoveredIndex = tbd.index
@@ -549,27 +675,95 @@ Item {
                                     }
                                 }
                                 background: Rectangle {
-                                    color: tablesList.hoveredIndex === tbd.index ? Theme.hover : "transparent"
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8; anchors.rightMargin: 8
+                                    radius: Theme.radius
+                                    color: leafRow.hov ? Theme.hover : "transparent"
                                     Behavior on color { ColorAnimation { duration: Theme.fast } }
                                 }
                                 contentItem: RowLayout {
                                     spacing: 8
+                                    // Small type-colour dot — the only colour accent.
+                                    Rectangle {
+                                        Layout.leftMargin: 30
+                                        implicitWidth: 6; implicitHeight: 6; radius: 3
+                                        color: browserCol.typeColor(leafRow.objType)
+                                    }
                                     Icon {
-                                        Layout.leftMargin: 14
-                                        name: parent.isRoutine ? "zap" : "database"
-                                        size: 14; opacity: 0.85
-                                        color: parent.objType === "procedure" ? Theme.warning
-                                             : parent.objType === "function" ? Theme.accent2
-                                             : (sessionObj ? Theme.engineColor(sessionObj.engine) : Theme.sqlTag)
+                                        name: browserCol.typeIcon(leafRow.objType)
+                                        size: 14
+                                        color: leafRow.hov ? Theme.text : Theme.textDim
                                     }
                                     Text {
                                         Layout.fillWidth: true
+                                        Layout.rightMargin: 12
                                         text: tbd.modelData.name || ""
-                                        color: Theme.textDim; font.pixelSize: Theme.fontSm
+                                        color: leafRow.hov ? Theme.text : Theme.textDim
+                                        font.pixelSize: Theme.fontSm
                                         elide: Text.ElideMiddle
                                     }
                                 }
-                                onClicked: tablesList.openObject(tbd.modelData.name, objType)
+                                onClicked: tablesList.openObject(tbd.modelData.name, leafRow.objType, tbd.modelData.args)
+                            }
+                        }
+                    }
+
+                    // Recently opened objects — quick re-access, pinned to the bottom.
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: 8
+                        spacing: 0
+                        visible: browserCol.recents.length > 0
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 14; Layout.rightMargin: 14
+                            implicitHeight: 1; color: Theme.border; opacity: 0.6
+                        }
+                        Text {
+                            Layout.leftMargin: 14
+                            Layout.topMargin: 10; Layout.bottomMargin: 4
+                            text: qsTr("RECENT")
+                            color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                            font.weight: Font.DemiBold; font.letterSpacing: 0.8
+                        }
+                        Repeater {
+                            model: browserCol.recents
+                            delegate: ItemDelegate {
+                                id: recentRow
+                                required property var modelData
+                                Layout.fillWidth: true
+                                implicitHeight: 28
+                                readonly property bool hov: hovered
+                                background: Rectangle {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8; anchors.rightMargin: 8
+                                    radius: Theme.radius
+                                    color: recentRow.hov ? Theme.hover : "transparent"
+                                    Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                }
+                                contentItem: RowLayout {
+                                    spacing: 8
+                                    Rectangle {
+                                        Layout.leftMargin: 16
+                                        implicitWidth: 6; implicitHeight: 6; radius: 3
+                                        color: browserCol.typeColor(recentRow.modelData.type)
+                                    }
+                                    Icon {
+                                        name: browserCol.typeIcon(recentRow.modelData.type)
+                                        size: 14
+                                        color: recentRow.hov ? Theme.text : Theme.textDim
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        Layout.rightMargin: 12
+                                        text: recentRow.modelData.name || ""
+                                        color: recentRow.hov ? Theme.text : Theme.textDim
+                                        font.pixelSize: Theme.fontSm
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                                onClicked: tablesList.openObject(recentRow.modelData.name, recentRow.modelData.type, recentRow.modelData.args)
                             }
                         }
                     }

@@ -117,6 +117,8 @@ public:
     Q_INVOKABLE void execute(const QString& sql);
     // Switches the active database (USE) and reloads its table list.
     Q_INVOKABLE void useDatabase(const QString& name);
+    // Re-reads the object browser for the current database (manual refresh).
+    Q_INVOKABLE void refreshObjects();
     // Drops the live connection but keeps the tab; reconnect()/execute() resume.
     Q_INVOKABLE void disconnectSession();
     // How long (ms) the connection may sit idle before it is paused. 0 disables.
@@ -141,6 +143,7 @@ signals:
                    const QString& password, const QString& database);
     void doExecute(const QString& sql);
     void doUseDatabase(const QString& name);
+    void doRefreshObjects();
     void doStats(const QString& table);
 
 private:
@@ -151,6 +154,7 @@ private:
     void onResults(const QVector<SqlResultSet>& sets, qint64 elapsed, const QString& error);
     void rebuildModels();
     void onSwitched(const QString& currentDb, const QVariantList& objects);
+    void onObjectsRefreshed(const QVariantList& objects);
     void onStats(const QString& table, qint64 rowCount, qint64 sizeKb);
     // Returns the single source table of a plain SELECT, or "" if the query
     // joins, lists several tables, or isn't a simple table read.

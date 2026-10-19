@@ -157,7 +157,21 @@ jobs:
           # windeployqt resolves qt6keychain.dll (a qt6* name) from Qt's bin, not
           # from the exe dir, so place it beside windeployqt before running it.
           cp "$RUNNER_TEMP"/deps/bin/*.dll "$(dirname "$(command -v windeployqt)")/" 2>/dev/null || true
-          windeployqt --qmldir qml --release dist/Perch.exe
+          # --compiler-runtime bundles the MSVC runtime (MSVCP140.dll,
+          # VCRUNTIME140*.dll) app-local so machines without the VC++
+          # Redistributable installed can still launch Perch.
+          windeployqt --qmldir qml --release --compiler-runtime dist/Perch.exe
+          # Belt-and-suspenders: copy the runtime DLLs straight from the MSVC
+          # toolchain redist dir too, in case windeployqt could not locate them.
+          if [ -n "${VCToolsRedistDir:-}" ]; then
+            find "$VCToolsRedistDir" -path '*x64*' \
+              \( -name 'MSVCP140*.dll' -o -name 'VCRUNTIME140*.dll' -o -name 'CONCRT140.dll' \) \
+              -exec cp -n {} dist/ \; 2>/dev/null || true
+          fi
+          # Fail loudly if the three required runtime DLLs still aren't present.
+          for d in MSVCP140.dll VCRUNTIME140.dll VCRUNTIME140_1.dll; do
+            [ -f "dist/$d" ] || { echo "ERROR: $d missing from dist/"; exit 1; }
+          done
           # NLA needs OpenSSL's legacy provider (MD4/RC4); ship and activate it.
           bash .github/scripts/bundle-openssl-legacy-win.sh dist
           cp windows/perch.ico dist/ 2>/dev/null || true

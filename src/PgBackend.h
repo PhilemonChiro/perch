@@ -19,6 +19,7 @@ public:
     bool isOpen() const override { return m_conn != nullptr; }
     bool runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err) override;
     void switchDatabase(const QString& name, QString& currentDb, QVariantList& objects) override;
+    void refreshObjects(QVariantList& objects) override { if (m_conn) objects = objectList(); }
     void stats(const QString& table, qint64& rowCount, qint64& sizeKb) override;
 
 private:

@@ -67,11 +67,20 @@ public slots:
         emit statsReady(table, rowCount, sizeKb);
     }
 
+    // Re-reads the object list for the current database (manual refresh).
+    void refresh()
+    {
+        QVariantList objects;
+        m_backend->refreshObjects(objects);
+        emit objectsRefreshed(objects);
+    }
+
     void shutdown() { m_backend->close(); }
 
 signals:
     void connected(const QStringList& databases, const QString& currentDb, const QVariantList& objects);
     void switched(const QString& currentDb, const QVariantList& objects);
+    void objectsRefreshed(const QVariantList& objects);
     void failed(const QString& error);
     void results(const QVector<SqlResultSet>& sets, qint64 elapsedMs, const QString& error);
     void statsReady(const QString& table, qint64 rowCount, qint64 sizeKb);
@@ -116,9 +125,11 @@ SqlSession::SqlSession(const QString& hostId, const QString& host, int port,
     connect(this, &SqlSession::doConnect, m_worker, &SqlWorker::connectTo);
     connect(this, &SqlSession::doExecute, m_worker, &SqlWorker::run);
     connect(this, &SqlSession::doUseDatabase, m_worker, &SqlWorker::switchTo);
+    connect(this, &SqlSession::doRefreshObjects, m_worker, &SqlWorker::refresh);
     connect(this, &SqlSession::doStats, m_worker, &SqlWorker::statsFor);
     connect(m_worker, &SqlWorker::connected, this, &SqlSession::onConnected);
     connect(m_worker, &SqlWorker::switched, this, &SqlSession::onSwitched);
+    connect(m_worker, &SqlWorker::objectsRefreshed, this, &SqlSession::onObjectsRefreshed);
     connect(m_worker, &SqlWorker::failed, this, &SqlSession::onFailed);
     connect(m_worker, &SqlWorker::results, this, &SqlSession::onResults);
     connect(m_worker, &SqlWorker::statsReady, this, &SqlSession::onStats);
@@ -276,6 +287,14 @@ void SqlSession::useDatabase(const QString& name)
     emit doUseDatabase(name);
 }
 
+void SqlSession::refreshObjects()
+{
+    if (m_state != Connected)
+        return;
+    kickIdle();
+    emit doRefreshObjects();
+}
+
 void SqlSession::disconnectSession()
 {
     m_idleTimer.stop();
@@ -334,6 +353,14 @@ void SqlSession::onSwitched(const QString& currentDb, const QVariantList& object
         m_currentDatabase = currentDb;
         emit currentDatabaseChanged();
     }
+    m_objects = objects;
+    m_tables = tableNames(objects);
+    emit tablesChanged();
+    kickIdle();
+}
+
+void SqlSession::onObjectsRefreshed(const QVariantList& objects)
+{
     m_objects = objects;
     m_tables = tableNames(objects);
     emit tablesChanged();

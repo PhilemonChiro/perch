@@ -199,7 +199,12 @@ QVariantList TdsBackend::objectList()
     if (runQuery(QStringLiteral(
                      "SELECT s.name + '.' + o.name, "
                      "CASE o.type WHEN 'U' THEN 'table' WHEN 'V' THEN 'view' "
-                     "WHEN 'P' THEN 'procedure' ELSE 'function' END "
+                     "WHEN 'P' THEN 'procedure' ELSE 'function' END, "
+                     // Comma-separated input-parameter signature (procedures/functions only).
+                     "STUFF((SELECT ', ' + p.name + ' ' + TYPE_NAME(p.user_type_id) "
+                     "       FROM sys.parameters p "
+                     "       WHERE p.object_id = o.object_id AND p.parameter_id > 0 AND p.is_output = 0 "
+                     "       ORDER BY p.parameter_id FOR XML PATH('')), 1, 2, '') "
                      "FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id "
                      "WHERE o.type IN ('U','V','P','FN','IF','TF') AND o.is_ms_shipped = 0 "
                      "ORDER BY CASE o.type WHEN 'U' THEN 0 WHEN 'V' THEN 1 WHEN 'P' THEN 2 ELSE 3 END, "
@@ -208,7 +213,8 @@ QVariantList TdsBackend::objectList()
         for (const QStringList& r : rows)
             if (r.size() >= 2 && !r.first().isEmpty())
                 out.append(QVariantMap{ { QStringLiteral("name"), r.at(0) },
-                                        { QStringLiteral("type"), r.at(1) } });
+                                        { QStringLiteral("type"), r.at(1) },
+                                        { QStringLiteral("args"), r.size() >= 3 ? r.at(2) : QString() } });
     return out;
 }
 
