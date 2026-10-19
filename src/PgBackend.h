@@ -18,7 +18,7 @@ public:
     void close() override;
     bool isOpen() const override { return m_conn != nullptr; }
     bool runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err) override;
-    void switchDatabase(const QString& name, QString& currentDb, QStringList& tables) override;
+    void switchDatabase(const QString& name, QString& currentDb, QVariantList& objects) override;
     void stats(const QString& table, qint64& rowCount, qint64& sizeKb) override;
 
 private:
@@ -27,7 +27,7 @@ private:
     QString doOpen(const QString& database, SqlConnectInfo& info);
     QStringList databaseList();
     QString currentDb();
-    QStringList tableList();
+    QVariantList objectList();
     // Runs a single metadata query, returning its first column as a list.
     QStringList firstColumn(const QString& sql);
 

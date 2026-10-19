@@ -53,6 +53,8 @@ class SqlSession : public QObject
     Q_PROPERTY(QStringList databases READ databases NOTIFY databasesChanged)
     Q_PROPERTY(QString currentDatabase READ currentDatabase NOTIFY currentDatabaseChanged)
     Q_PROPERTY(QStringList tables READ tables NOTIFY tablesChanged)
+    // Full object browser: list of {name, type} maps (table/view/procedure/function).
+    Q_PROPERTY(QVariantList objects READ objects NOTIFY tablesChanged)
     // Background-fetched stats for the single table the last SELECT read from.
     Q_PROPERTY(QString statsTable READ statsTable NOTIFY statsChanged)
     Q_PROPERTY(qint64 tableRowCount READ tableRowCount NOTIFY statsChanged)
@@ -94,6 +96,7 @@ public:
     QStringList databases() const { return m_databases; }
     QString currentDatabase() const { return m_currentDatabase; }
     QStringList tables() const { return m_tables; }
+    QVariantList objects() const { return m_objects; }
     QString statsTable() const { return m_statsTable; }
     qint64 tableRowCount() const { return m_tableRowCount; }
     qint64 tableSizeKb() const { return m_tableSizeKb; }
@@ -143,11 +146,11 @@ signals:
 private:
     void setState(State s);
     void kickIdle();
-    void onConnected(const QStringList& databases, const QString& currentDb, const QStringList& tables);
+    void onConnected(const QStringList& databases, const QString& currentDb, const QVariantList& objects);
     void onFailed(const QString& error);
     void onResults(const QVector<SqlResultSet>& sets, qint64 elapsed, const QString& error);
     void rebuildModels();
-    void onSwitched(const QString& currentDb, const QStringList& tables);
+    void onSwitched(const QString& currentDb, const QVariantList& objects);
     void onStats(const QString& table, qint64 rowCount, qint64 sizeKb);
     // Returns the single source table of a plain SELECT, or "" if the query
     // joins, lists several tables, or isn't a simple table read.
@@ -165,6 +168,7 @@ private:
     QList<SqlResultModel*> m_extraModels;      // models for sets beyond the first
     QString m_batchSql;                        // the last batch's SQL (for stats)
     QStringList m_databases, m_tables;
+    QVariantList m_objects;
     QString m_currentDatabase;
 
     QString m_statsTable, m_pendingStatsTable;

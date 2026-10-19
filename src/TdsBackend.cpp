@@ -1,6 +1,7 @@
 #include "TdsBackend.h"
 
 #include <QString>
+#include <QVariantMap>
 
 #include <sybdb.h>
 #include <sybfront.h>
@@ -108,16 +109,16 @@ QString TdsBackend::open(const QString& host, int port, const QString& user,
 
     info.databases = databaseList();
     info.currentDb = currentDb();
-    info.tables = tableList();
+    info.objects = objectList();
     return {};
 }
 
-void TdsBackend::switchDatabase(const QString& name, QString& currentDb, QStringList& tables)
+void TdsBackend::switchDatabase(const QString& name, QString& currentDb, QVariantList& objects)
 {
     t_current = this;
     if (!m_proc) {
         currentDb = this->currentDb();
-        tables = tableList();
+        objects = objectList();
         return;
     }
     m_err.clear();
@@ -130,7 +131,7 @@ void TdsBackend::switchDatabase(const QString& name, QString& currentDb, QString
     QString err;
     runQuery(QStringLiteral("USE [%1]").arg(safe), cols, rows, affected, err);
     currentDb = this->currentDb();
-    tables = tableList();
+    objects = objectList();
 }
 
 void TdsBackend::stats(const QString& table, qint64& rowCount, qint64& sizeKb)
@@ -186,19 +187,28 @@ QString TdsBackend::currentDb()
     return {};
 }
 
-QStringList TdsBackend::tableList()
+// Every browsable object — tables, views, stored procedures and functions —
+// each as {"name": "schema.name", "type": ...}, ordered by type then name.
+QVariantList TdsBackend::objectList()
 {
-    QStringList out, cols;
+    QVariantList out;
+    QStringList cols;
     QVector<QStringList> rows;
     int affected = -1;
     QString err;
     if (runQuery(QStringLiteral(
-                     "SELECT TABLE_SCHEMA + '.' + TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-                     "WHERE TABLE_TYPE IN ('BASE TABLE','VIEW') ORDER BY TABLE_SCHEMA, TABLE_NAME"),
+                     "SELECT s.name + '.' + o.name, "
+                     "CASE o.type WHEN 'U' THEN 'table' WHEN 'V' THEN 'view' "
+                     "WHEN 'P' THEN 'procedure' ELSE 'function' END "
+                     "FROM sys.objects o JOIN sys.schemas s ON s.schema_id = o.schema_id "
+                     "WHERE o.type IN ('U','V','P','FN','IF','TF') AND o.is_ms_shipped = 0 "
+                     "ORDER BY CASE o.type WHEN 'U' THEN 0 WHEN 'V' THEN 1 WHEN 'P' THEN 2 ELSE 3 END, "
+                     "s.name, o.name"),
                  cols, rows, affected, err))
         for (const QStringList& r : rows)
-            if (!r.isEmpty())
-                out << r.first();
+            if (r.size() >= 2 && !r.first().isEmpty())
+                out.append(QVariantMap{ { QStringLiteral("name"), r.at(0) },
+                                        { QStringLiteral("type"), r.at(1) } });
     return out;
 }
 

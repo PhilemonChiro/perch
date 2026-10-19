@@ -7,6 +7,7 @@
 #include <QMetaType>
 #include <QObject>
 #include <QRegularExpression>
+#include <QVariantMap>
 
 #include <memory>
 
@@ -34,15 +35,15 @@ public slots:
             emit failed(err);
             return;
         }
-        emit connected(info.databases, info.currentDb, info.tables);
+        emit connected(info.databases, info.currentDb, info.objects);
     }
 
     void switchTo(const QString& name)
     {
         QString currentDb;
-        QStringList tables;
-        m_backend->switchDatabase(name, currentDb, tables);
-        emit switched(currentDb, tables);
+        QVariantList objects;
+        m_backend->switchDatabase(name, currentDb, objects);
+        emit switched(currentDb, objects);
     }
 
     void run(const QString& sql)
@@ -69,8 +70,8 @@ public slots:
     void shutdown() { m_backend->close(); }
 
 signals:
-    void connected(const QStringList& databases, const QString& currentDb, const QStringList& tables);
-    void switched(const QString& currentDb, const QStringList& tables);
+    void connected(const QStringList& databases, const QString& currentDb, const QVariantList& objects);
+    void switched(const QString& currentDb, const QVariantList& objects);
     void failed(const QString& error);
     void results(const QVector<SqlResultSet>& sets, qint64 elapsedMs, const QString& error);
     void statsReady(const QString& table, qint64 rowCount, qint64 sizeKb);
@@ -284,8 +285,22 @@ void SqlSession::disconnectSession()
     setState(Disconnected);
 }
 
+// Names of the table/view objects only — used for the sidebar count and any
+// consumer that wants a plain selectable-table list.
+static QStringList tableNames(const QVariantList& objects)
+{
+    QStringList out;
+    for (const QVariant& v : objects) {
+        const QVariantMap m = v.toMap();
+        const QString type = m.value(QStringLiteral("type")).toString();
+        if (type == QLatin1String("table") || type == QLatin1String("view"))
+            out << m.value(QStringLiteral("name")).toString();
+    }
+    return out;
+}
+
 void SqlSession::onConnected(const QStringList& databases, const QString& currentDb,
-                             const QStringList& tables)
+                             const QVariantList& objects)
 {
     m_haveConnected = true;
     m_databases = databases;
@@ -294,7 +309,8 @@ void SqlSession::onConnected(const QStringList& databases, const QString& curren
         m_currentDatabase = currentDb;
         emit currentDatabaseChanged();
     }
-    m_tables = tables;
+    m_objects = objects;
+    m_tables = tableNames(objects);
     emit tablesChanged();
     m_statusText = QStringLiteral("Connected.");
     emit statusChanged();
@@ -312,13 +328,14 @@ void SqlSession::onConnected(const QStringList& databases, const QString& curren
     }
 }
 
-void SqlSession::onSwitched(const QString& currentDb, const QStringList& tables)
+void SqlSession::onSwitched(const QString& currentDb, const QVariantList& objects)
 {
     if (!currentDb.isEmpty() && currentDb != m_currentDatabase) {
         m_currentDatabase = currentDb;
         emit currentDatabaseChanged();
     }
-    m_tables = tables;
+    m_objects = objects;
+    m_tables = tableNames(objects);
     emit tablesChanged();
     kickIdle();
 }

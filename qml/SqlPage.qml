@@ -415,10 +415,25 @@ Item {
                     anchors.fill: parent
                     spacing: 0
 
-                    readonly property var filteredTables: {
-                        const all = sessionObj ? sessionObj.tables : []
+                    readonly property var filteredObjects: {
+                        const all = sessionObj ? sessionObj.objects : []
                         const q = tableSearch.text.trim().toLowerCase()
-                        return q === "" ? all : all.filter(t => t.toLowerCase().indexOf(q) !== -1)
+                        return q === "" ? all : all.filter(o => o.name.toLowerCase().indexOf(q) !== -1)
+                    }
+                    // Flattened rows: a group header followed by its objects, in
+                    // the order Tables, Views, Procedures, Functions.
+                    readonly property var objectRows: {
+                        const order = ["table", "view", "procedure", "function"]
+                        const labels = { table: qsTr("Tables"), view: qsTr("Views"),
+                                         procedure: qsTr("Procedures"), function: qsTr("Functions") }
+                        const rows = []
+                        for (const t of order) {
+                            const items = filteredObjects.filter(o => o.type === t)
+                            if (!items.length) continue
+                            rows.push({ header: true, label: labels[t], count: items.length })
+                            for (const it of items) rows.push({ header: false, name: it.name, type: it.type })
+                        }
+                        return rows
                     }
 
                     RowLayout {
@@ -427,16 +442,16 @@ Item {
                         Layout.bottomMargin: 6
                         Text {
                             Layout.fillWidth: true
-                            text: qsTr("TABLES & VIEWS")
+                            text: qsTr("OBJECTS")
                             color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
                             font.letterSpacing: 0.6
                         }
                         Text {
-                            text: parent.parent.filteredTables.length + (sessionObj && tableSearch.text ? "/" + sessionObj.tables.length : "")
+                            text: parent.parent.filteredObjects.length + (sessionObj && tableSearch.text ? "/" + sessionObj.objects.length : "")
                             color: Theme.textFaint; font.pixelSize: Theme.fontXs
                         }
                     }
-                    // Table filter.
+                    // Object filter.
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.leftMargin: 12; Layout.rightMargin: 12; Layout.bottomMargin: 6
@@ -456,7 +471,7 @@ Item {
                                 background: null
                                 color: Theme.text
                                 font.pixelSize: Theme.fontSm
-                                placeholderText: qsTr("Filter tables")
+                                placeholderText: qsTr("Filter objects")
                                 placeholderTextColor: Theme.textFaint
                             }
                             Icon {
@@ -471,38 +486,91 @@ Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        model: parent.filteredTables
+                        model: parent.objectRows
                         boundsBehavior: Flickable.StopAtBounds
                         ScrollBar.vertical: ScrollBar {}
                         property int hoveredIndex: -1
                         HoverHandler { onHoveredChanged: if (!hovered) tablesList.hoveredIndex = -1 }
-                        delegate: ItemDelegate {
+
+                        // Opens an object with the action that fits its type: run a
+                        // SELECT for tables/views, or stage a call template for a
+                        // procedure/function (never auto-run — a proc may write).
+                        function openObject(name, type) {
+                            const isPg = sessionObj && sessionObj.engine === "postgres"
+                            if (type === "table" || type === "view") {
+                                editor.text = isPg ? ("SELECT * FROM " + name + " LIMIT 100")
+                                                   : ("SELECT TOP 100 * FROM " + name)
+                                page.run()
+                            } else if (type === "procedure") {
+                                editor.text = isPg ? ("CALL " + name + "();") : ("EXEC " + name + ";")
+                                editor.forceActiveFocus()
+                            } else {
+                                editor.text = "SELECT * FROM " + name + "();"
+                                editor.forceActiveFocus()
+                            }
+                        }
+
+                        delegate: Item {
                             id: tbd
                             required property int index
-                            required property string modelData
+                            required property var modelData
                             width: tablesList.width
-                            height: 30
-                            HoverHandler {
-                                onHoveredChanged: {
-                                    if (hovered) tablesList.hoveredIndex = tbd.index
-                                    else if (tablesList.hoveredIndex === tbd.index) tablesList.hoveredIndex = -1
-                                }
-                            }
-                            background: Rectangle {
-                                color: tablesList.hoveredIndex === tbd.index ? Theme.hover : "transparent"
-                                Behavior on color { ColorAnimation { duration: Theme.fast } }
-                            }
-                            contentItem: RowLayout {
-                                spacing: 8
-                                Icon { Layout.leftMargin: 14; name: "database"; size: 14; color: Theme.sqlTag; opacity: 0.85 }
+                            height: modelData.header ? 26 : 30
+
+                            // Group header row.
+                            RowLayout {
+                                visible: tbd.modelData.header
+                                anchors.fill: parent
+                                anchors.leftMargin: 14; anchors.rightMargin: 14
+                                anchors.topMargin: 6
+                                spacing: 6
                                 Text {
-                                    Layout.fillWidth: true
-                                    text: modelData
-                                    color: Theme.textDim; font.pixelSize: Theme.fontSm
-                                    elide: Text.ElideMiddle
+                                    text: tbd.modelData.label || ""
+                                    color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                                    font.weight: Font.DemiBold; font.letterSpacing: 0.4
+                                }
+                                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border; opacity: 0.6 }
+                                Text {
+                                    text: tbd.modelData.count || ""
+                                    color: Theme.textFaint; font.pixelSize: Theme.fontXs
                                 }
                             }
-                            onClicked: { editor.text = "SELECT TOP 100 * FROM " + modelData; page.run() }
+
+                            // Object row.
+                            ItemDelegate {
+                                visible: !tbd.modelData.header
+                                anchors.fill: parent
+                                readonly property string objType: tbd.modelData.type || "table"
+                                readonly property bool isRoutine: objType === "procedure" || objType === "function"
+                                HoverHandler {
+                                    onHoveredChanged: {
+                                        if (hovered) tablesList.hoveredIndex = tbd.index
+                                        else if (tablesList.hoveredIndex === tbd.index) tablesList.hoveredIndex = -1
+                                    }
+                                }
+                                background: Rectangle {
+                                    color: tablesList.hoveredIndex === tbd.index ? Theme.hover : "transparent"
+                                    Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                }
+                                contentItem: RowLayout {
+                                    spacing: 8
+                                    Icon {
+                                        Layout.leftMargin: 14
+                                        name: parent.isRoutine ? "zap" : "database"
+                                        size: 14; opacity: 0.85
+                                        color: parent.objType === "procedure" ? Theme.warning
+                                             : parent.objType === "function" ? Theme.accent2
+                                             : (sessionObj ? Theme.engineColor(sessionObj.engine) : Theme.sqlTag)
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: tbd.modelData.name || ""
+                                        color: Theme.textDim; font.pixelSize: Theme.fontSm
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                                onClicked: tablesList.openObject(tbd.modelData.name, objType)
+                            }
                         }
                     }
                 }

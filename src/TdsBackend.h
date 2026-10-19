@@ -17,7 +17,7 @@ public:
     void close() override;
     bool isOpen() const override { return m_proc != nullptr; }
     bool runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err) override;
-    void switchDatabase(const QString& name, QString& currentDb, QStringList& tables) override;
+    void switchDatabase(const QString& name, QString& currentDb, QVariantList& objects) override;
     void stats(const QString& table, qint64& rowCount, qint64& sizeKb) override;
 
     // Appended to by the global db-lib error/message handlers for the current
@@ -27,7 +27,7 @@ public:
 private:
     QStringList databaseList();
     QString currentDb();
-    QStringList tableList();
+    QVariantList objectList();
     bool runQuery(const QString& sql, QStringList& columns, QVector<QStringList>& rows,
                   int& affected, QString& err);
     QString cell(int c);

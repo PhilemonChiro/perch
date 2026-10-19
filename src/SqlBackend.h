@@ -2,6 +2,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 #include <QVector>
 
 // One result set produced by a batch: its columns, its rows, and for a
@@ -15,12 +16,13 @@ struct SqlResultSet
 };
 
 // Server metadata captured on a successful connect, so the console can populate
-// the database switcher and table list immediately.
+// the database switcher and object browser immediately. `objects` is a list of
+// {"name": "schema.name", "type": "table"|"view"|"procedure"|"function"} maps.
 struct SqlConnectInfo
 {
     QStringList databases;
     QString currentDb;
-    QStringList tables;
+    QVariantList objects;
 };
 
 // A database engine behind the SQL console. One instance is created by, lives
@@ -46,10 +48,10 @@ public:
     // affected count). Returns false with `err` set on failure.
     virtual bool runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err) = 0;
 
-    // Switches the active database and reloads its table list, filling the
-    // current database name and table list. SQL Server issues USE; PostgreSQL,
-    // which cannot change database on a live connection, reopens.
-    virtual void switchDatabase(const QString& name, QString& currentDb, QStringList& tables) = 0;
+    // Switches the active database and reloads its objects, filling the current
+    // database name and object list. SQL Server issues USE; PostgreSQL, which
+    // cannot change database on a live connection, reopens.
+    virtual void switchDatabase(const QString& name, QString& currentDb, QVariantList& objects) = 0;
 
     // Fast metadata stats (no table scan) for one "schema.table"; each is -1
     // when unavailable.

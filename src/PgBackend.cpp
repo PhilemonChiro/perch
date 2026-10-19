@@ -1,6 +1,7 @@
 #include "PgBackend.h"
 
 #include <QString>
+#include <QVariantMap>
 
 PgBackend::~PgBackend()
 {
@@ -54,17 +55,17 @@ QString PgBackend::doOpen(const QString& database, SqlConnectInfo& info)
 
     info.databases = databaseList();
     info.currentDb = currentDb();
-    info.tables = tableList();
+    info.objects = objectList();
     return {};
 }
 
-void PgBackend::switchDatabase(const QString& name, QString& currentDb, QStringList& tables)
+void PgBackend::switchDatabase(const QString& name, QString& currentDb, QVariantList& objects)
 {
     SqlConnectInfo info;
     const QString err = doOpen(name, info);
     if (err.isEmpty()) {
         currentDb = info.currentDb;
-        tables = info.tables;
+        objects = info.objects;
     }
 }
 
@@ -123,12 +124,39 @@ QString PgBackend::currentDb()
     return r.isEmpty() ? QString() : r.first();
 }
 
-QStringList PgBackend::tableList()
+// Every browsable object — tables, views, procedures and functions — each as
+// {"name": "schema.name", "type": ...}, ordered by type then name.
+QVariantList PgBackend::objectList()
 {
-    return firstColumn(QStringLiteral(
-        "SELECT table_schema || '.' || table_name FROM information_schema.tables "
-        "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
-        "AND table_type IN ('BASE TABLE', 'VIEW') ORDER BY table_schema, table_name"));
+    QVariantList out;
+    if (!m_conn)
+        return out;
+    const QString sql = QStringLiteral(
+        "SELECT name, typ FROM ("
+        "  SELECT table_schema || '.' || table_name AS name, "
+        "         CASE table_type WHEN 'VIEW' THEN 'view' ELSE 'table' END AS typ, "
+        "         CASE table_type WHEN 'VIEW' THEN 1 ELSE 0 END AS ord "
+        "  FROM information_schema.tables "
+        "  WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
+        "  UNION ALL "
+        "  SELECT routine_schema || '.' || routine_name, "
+        "         CASE routine_type WHEN 'PROCEDURE' THEN 'procedure' ELSE 'function' END, "
+        "         CASE routine_type WHEN 'PROCEDURE' THEN 2 ELSE 3 END "
+        "  FROM information_schema.routines "
+        "  WHERE routine_schema NOT IN ('pg_catalog', 'information_schema')"
+        ") q ORDER BY ord, name");
+    PGresult* res = PQexec(m_conn, sql.toUtf8().constData());
+    if (res && PQresultStatus(res) == PGRES_TUPLES_OK) {
+        const int n = PQntuples(res);
+        for (int r = 0; r < n; ++r)
+            if (!PQgetisnull(res, r, 0))
+                out.append(QVariantMap{
+                    { QStringLiteral("name"), QString::fromUtf8(PQgetvalue(res, r, 0)) },
+                    { QStringLiteral("type"), QString::fromUtf8(PQgetvalue(res, r, 1)) } });
+    }
+    if (res)
+        PQclear(res);
+    return out;
 }
 
 bool PgBackend::runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err)
