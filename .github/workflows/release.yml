@@ -201,52 +201,52 @@ jobs:
           # VCRUNTIME140*.dll) app-local so machines without the VC++
           # Redistributable installed can still launch Perch.
           windeployqt --qmldir qml --release --compiler-runtime dist/Perch.exe
-          # windeployqt --compiler-runtime only drops vc_redist.x64.exe (the
-          # installer), not the loose DLLs, so copy the whole MSVC runtime DLL set
-          # ourselves. The SQL client DLLs (freetds/libpq) pull in extra CRT parts
-          # such as MSVCP140_2.dll, so copy every MSVCP140*/VCRUNTIME140*/CONCRT140*
-          # file, not a fixed list. Source: the toolchain redist CRT folder when
-          # present, plus the installed copies in System32 (present because VS is
-          # installed); cp -n keeps whichever landed first.
-          # Copy every MSVCP140*/VCRUNTIME140*/CONCRT140* DLL found anywhere under
-          # a given directory into dist/ (the SQL client DLLs pull in extra CRT
-          # parts such as MSVCP140_2.dll, so match by glob, not a fixed list).
-          collect_from() {
-            local base="$1" b
-            [ -z "$base" ] && return 0
-            b="$(cygpath -u "$base" 2>/dev/null || echo "$base")"
-            [ -d "$b" ] || return 0
-            find "$b" \( -iname 'MSVCP140*.dll' -o -iname 'VCRUNTIME140*.dll' -o -iname 'CONCRT140*.dll' \) \
-              -exec cp -n {} dist/ \; 2>/dev/null || true
+          # Bundle the x64 MSVC runtime app-local so Perch runs on ANY Windows
+          # machine without the VC++ redistributable installed. windeployqt
+          # --compiler-runtime only drops the vc_redist installer, so copy the
+          # loose DLLs ourselves — but ONLY the x64 release CRT, never the arm64,
+          # x86 or debug variants (a wrong-arch DLL causes 0xc000007b at launch).
+          # Read the PE machine field: 34404=0x8664 x64, 332=0x14c x86, 43620=0xaa64 arm64.
+          pe_machine() {
+            local f="$1" peoff
+            [ -f "$f" ] || { echo 0; return; }
+            peoff="$(od -An -t u4 -j 60 -N 4 "$f" 2>/dev/null | tr -d ' ')"
+            [ -n "$peoff" ] || { echo 0; return; }
+            od -An -t u2 -j $((peoff + 4)) -N 2 "$f" 2>/dev/null | tr -d ' '
+          }
+          copy_x64() {  # copy $1 into dist/ only when it is an x64 PE
+            [ -f "$1" ] && [ "$(pe_machine "$1")" = "34404" ] && cp -n "$1" dist/
             return 0
           }
-          # 1) Loose DLLs already on disk: the VS redist tree and the System dirs.
-          collect_from "${VCToolsRedistDir:-}"
-          collect_from "${VCINSTALLDIR:-}"
-          collect_from /c/Windows/System32
-          # 2) Still missing? Install the VC++ redistributable (the runner is admin)
-          #    to populate System32, then re-scan. Try the bundled installer and
-          #    choco — whichever is available.
+          CRT_DLLS="MSVCP140 MSVCP140_1 MSVCP140_2 MSVCP140_atomic_wait MSVCP140_codecvt_ids VCRUNTIME140 VCRUNTIME140_1 CONCRT140"
+          # 1) The canonical source: the x64 release CRT folder in the VS redist tree.
+          if [ -n "${VCToolsRedistDir:-}" ]; then
+            redist="$(cygpath -u "$VCToolsRedistDir" 2>/dev/null || echo "$VCToolsRedistDir")"
+            while IFS= read -r crt; do
+              for f in "$crt"/*.dll; do copy_x64 "$f"; done
+            done < <(find "$redist" -type d -ipath '*/x64/*' -iname 'Microsoft.VC*.CRT' 2>/dev/null | grep -vi debug)
+          fi
+          # 2) Secondary: the x64 copies in System32 (on an x64 runner).
+          for n in $CRT_DLLS; do copy_x64 "/c/Windows/System32/$n.dll"; done
+          # 3) Still missing the base DLL? Install the x64 redistributable (runner
+          #    is admin), then copy the x64 DLLs from System32.
           if [ ! -f dist/MSVCP140.dll ]; then
-            echo "Loose CRT DLLs not found; installing the VC++ redistributable..."
+            echo "x64 CRT not found locally; installing the VC++ redistributable..."
             [ -f dist/vc_redist.x64.exe ] && MSYS_NO_PATHCONV=1 powershell -NoProfile -Command \
               "Start-Process -FilePath 'dist\\vc_redist.x64.exe' -ArgumentList '/install','/quiet','/norestart' -Wait -Verb RunAs" || true
             command -v choco >/dev/null 2>&1 && choco install vcredist140 -y --no-progress >/dev/null 2>&1 || true
-            collect_from /c/Windows/System32
+            for n in $CRT_DLLS; do copy_x64 "/c/Windows/System32/$n.dll"; done
           fi
           # vc_redist.x64.exe is the installer, not a dependency; drop it from the app dir.
           rm -f dist/vc_redist.x64.exe
-          echo "Runtime DLLs collected into dist/:"
-          ls dist/ | grep -iE 'MSVCP140|VCRUNTIME140|CONCRT140' || echo "  (none)"
-          # Fail loudly if any required runtime DLL is still missing, dumping where
-          # the DLLs actually live so the source can be fixed without guessing.
+          # Guard: every required runtime DLL must be present AND x64 — never ship
+          # a wrong-arch CRT again.
+          echo "Bundled MSVC runtime (must all be x64):"
           for d in MSVCP140.dll MSVCP140_2.dll VCRUNTIME140.dll VCRUNTIME140_1.dll; do
-            [ -f "dist/$d" ] || {
-              echo "ERROR: $d missing from dist/"
-              echo "--- locations of MSVCP140.dll on the runner ---"
-              find /c/Windows /c/Program\ Files \( -iname 'MSVCP140.dll' -o -iname 'vcruntime140.dll' \) 2>/dev/null | head -20
-              exit 1
-            }
+            [ -f "dist/$d" ] || { echo "ERROR: $d missing from dist/"; exit 1; }
+            m="$(pe_machine "dist/$d")"
+            [ "$m" = "34404" ] || { echo "ERROR: dist/$d is not x64 (PE machine=$m)"; exit 1; }
+            echo "  $d  x64 OK"
           done
           # NLA needs OpenSSL's legacy provider (MD4/RC4); ship and activate it.
           bash .github/scripts/bundle-openssl-legacy-win.sh dist
