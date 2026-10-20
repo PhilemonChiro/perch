@@ -12,6 +12,8 @@ class ConnectionStore : public QAbstractListModel
     QML_ELEMENT
     QML_SINGLETON
     Q_PROPERTY(int hostCount READ hostCount NOTIFY changed)
+    // "" = all · "rdp" · "mssql" — filters the visible tree by connection type.
+    Q_PROPERTY(QString typeFilter READ typeFilter WRITE setTypeFilter NOTIFY changed)
 
 public:
     enum Roles {
@@ -27,6 +29,8 @@ public:
         ParentRole,
         ChildCountRole,
         LastConnectedRole,
+        ConnTypeRole,  // "rdp" | "mssql"
+        DatabaseRole,
     };
 
     static ConnectionStore* instance();
@@ -37,6 +41,8 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     int hostCount() const { return int(m_hosts.size()); }
+    QString typeFilter() const { return m_typeFilter; }
+    Q_INVOKABLE void setTypeFilter(const QString& t);
 
     Q_INVOKABLE QString addFolder(const QString& name, const QString& parentId = {});
     Q_INVOKABLE void renameFolder(const QString& id, const QString& name);
@@ -68,6 +74,8 @@ private:
     };
     struct Host {
         QString id, name, host, username, domain, folderId, share, gateway, credentialId;
+        QString type = QStringLiteral("rdp"); // "rdp" | "mssql"
+        QString database;                     // default database for mssql
         bool useUdp = false;
         int port = 3389;
         qint64 lastConnected = 0;
@@ -77,6 +85,8 @@ private:
         int index;
         int depth;
         QString id; // cached so stale rows resolve after m_hosts/m_folders change
+        bool header = false;    // a type-group header ("Remote desktops" / "Databases")
+        QString headerType;     // "rdp" | "mssql" for a header row
     };
 
     QString rowId(const Row& r) const;
@@ -86,10 +96,13 @@ private:
     void save() const;
     int folderIndex(const QString& id) const;
     int hostIndex(const QString& id) const;
+    bool folderHasType(const QString& folderId, const QString& type) const;
     QVariantMap hostMap(const Host& h) const;
     QString folderPath(const QString& id) const;
 
     QList<Folder> m_folders;
     QList<Host> m_hosts;
     QList<Row> m_rows;
+    QString m_typeFilter;
+    bool m_groupByType = true; // group top-level hosts under type headers
 };

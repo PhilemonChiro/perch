@@ -6,7 +6,8 @@
 
 class RdpSession;
 
-// The open tabs. Each row is one RdpSession.
+// The open tabs. Each row is a session — an RDP desktop or a SQL console —
+// exposed duck-typed (title/phase/kind/hostId) so one tab strip serves both.
 class SessionManager : public QAbstractListModel
 {
     Q_OBJECT
@@ -15,7 +16,7 @@ class SessionManager : public QAbstractListModel
     Q_PROPERTY(int count READ count NOTIFY countChanged)
 
 public:
-    enum Roles { SessionRole = Qt::UserRole + 1, TitleRole, StateRole, HostIdRole };
+    enum Roles { SessionRole = Qt::UserRole + 1, TitleRole, StateRole, KindRole, HostIdRole };
 
     static SessionManager* create(QQmlEngine*, QJSEngine*);
 
@@ -32,11 +33,17 @@ public:
     // Reconnect a session using a saved credential set (resolves its username/domain
     // and keychain password), and remember the choice on the connection.
     Q_INVOKABLE void reconnectWithCredential(RdpSession* session, const QString& credentialId);
-    // Parses "[domain\]user@host[:port]" and opens an ad-hoc session.
+    // Parses "[domain\]user@host[:port]" and opens an ad-hoc RDP session.
     Q_INVOKABLE int quickConnect(const QString& text);
+
+    // Opens a saved SQL Server connection as a tab (or focuses it).
+    Q_INVOKABLE int openDatabaseHost(const QString& hostId);
+    // Parses "[mssql://][user@]host[:port][/database]" and opens an ad-hoc SQL tab.
+    Q_INVOKABLE int quickConnectDatabase(const QString& text);
+
     Q_INVOKABLE void close(int index);
     Q_INVOKABLE void move(int from, int to);
-    Q_INVOKABLE RdpSession* at(int index) const;
+    Q_INVOKABLE QObject* at(int index) const;
     Q_INVOKABLE int indexOfHost(const QString& hostId) const;
     // Removes the stored password for a saved connection.
     Q_INVOKABLE void forgetPassword(const QString& hostId);
@@ -48,8 +55,8 @@ signals:
 
 private:
     explicit SessionManager(QObject* parent = nullptr);
-    int add(RdpSession* s);
+    int add(QObject* s);
     void broadcastClipboard();
 
-    QList<QPointer<RdpSession>> m_sessions;
+    QList<QPointer<QObject>> m_sessions;
 };

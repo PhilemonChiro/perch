@@ -47,7 +47,7 @@ jobs:
         run: |
           brew untap --force homebrew/core homebrew/cask 2>/dev/null || true
           rm -rf "$(brew --cache)/api" ~/Library/Caches/Homebrew/api 2>/dev/null || true
-          brew install freerdp ninja
+          brew install freerdp freetds libpq ninja
           brew list --versions freerdp
 
       # Cache the from-source FreeRDP install so it is rebuilt only when the
@@ -71,7 +71,8 @@ jobs:
             libx11-dev libxext-dev libxcursor-dev libxkbcommon-dev libxkbfile-dev \
             libxrandr-dev libxi-dev libxfixes-dev libxdamage-dev libxrender-dev \
             libxinerama-dev libfuse2 \
-            libkrb5-dev libcjson-dev liburiparser-dev
+            libkrb5-dev libcjson-dev liburiparser-dev \
+            freetds-dev libpq-dev
           if ls "$RUNNER_TEMP"/deps/lib*/libfreerdp3.so* >/dev/null 2>&1; then
             echo "FreeRDP $FREERDP_VERSION restored from cache; skipping build"
           else
@@ -93,13 +94,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\vcpkg\installed
-          key: vcpkg-${{ matrix.os }}-freerdp-v1
+          key: vcpkg-${{ matrix.os }}-freerdp-freetds-libpq-v2
 
       - name: FreeRDP (Windows, vcpkg)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install freerdp:x64-windows
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg" install freerdp:x64-windows freetds:x64-windows libpq:x64-windows
           "CMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" >> $env:GITHUB_ENV
 
       - uses: ilammy/msvc-dev-cmd@v1
@@ -193,7 +194,35 @@ jobs:
           # windeployqt resolves qt6keychain.dll (a qt6* name) from Qt's bin, not
           # from the exe dir, so place it beside windeployqt before running it.
           cp "$RUNNER_TEMP"/deps/bin/*.dll "$(dirname "$(command -v windeployqt)")/" 2>/dev/null || true
-          windeployqt --qmldir qml --release dist/Perch.exe
+          # --compiler-runtime bundles the MSVC runtime (MSVCP140.dll,
+          # VCRUNTIME140*.dll) app-local so machines without the VC++
+          # Redistributable installed can still launch Perch.
+          windeployqt --qmldir qml --release --compiler-runtime dist/Perch.exe
+          # windeployqt --compiler-runtime drops vc_redist.x64.exe (the installer),
+          # not the loose DLLs, so copy the runtime DLLs ourselves: first from the
+          # toolchain redist tree (when it ships unpacked CRT folders), else from
+          # the installed copies in System32 (present because VS is installed).
+          copy_runtime() {
+            local name="$1"
+            [ -f "dist/$name" ] && return 0
+            if [ -n "${VCToolsRedistDir:-}" ]; then
+              local redist hit
+              redist="$(cygpath -u "$VCToolsRedistDir" 2>/dev/null || echo "$VCToolsRedistDir")"
+              hit="$(find "$redist" -ipath '*x64*' -name "$name" 2>/dev/null | head -1)"
+              [ -n "$hit" ] && { cp "$hit" dist/; return 0; }
+            fi
+            [ -f "/c/Windows/System32/$name" ] && { cp "/c/Windows/System32/$name" dist/; return 0; }
+            return 1
+          }
+          for d in MSVCP140.dll VCRUNTIME140.dll VCRUNTIME140_1.dll CONCRT140.dll; do
+            copy_runtime "$d" || true
+          done
+          # vc_redist.x64.exe is the installer, not a dependency; drop it from the app dir.
+          rm -f dist/vc_redist.x64.exe
+          # Fail loudly if the three required runtime DLLs still aren't present.
+          for d in MSVCP140.dll VCRUNTIME140.dll VCRUNTIME140_1.dll; do
+            [ -f "dist/$d" ] || { echo "ERROR: $d missing from dist/"; ls -la dist/; exit 1; }
+          done
           # NLA needs OpenSSL's legacy provider (MD4/RC4); ship and activate it.
           bash .github/scripts/bundle-openssl-legacy-win.sh dist
           cp windows/perch.ico dist/ 2>/dev/null || true

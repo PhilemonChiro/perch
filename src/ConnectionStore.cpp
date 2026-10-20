@@ -103,6 +103,8 @@ QHash<int, QByteArray> ConnectionStore::roleNames() const
         {ParentRole, "parentId"},
         {ChildCountRole, "childCount"},
         {LastConnectedRole, "lastConnected"},
+        {ConnTypeRole, "connType"},
+        {DatabaseRole, "database"},
     };
 }
 
@@ -114,7 +116,19 @@ QVariant ConnectionStore::data(const QModelIndex& index, int role) const
     if (role == DepthRole)
         return r.depth;
     if (role == KindRole)
-        return r.folder ? QStringLiteral("folder") : QStringLiteral("host");
+        return r.header ? QStringLiteral("header")
+             : r.folder ? QStringLiteral("folder")
+                        : QStringLiteral("host");
+
+    if (r.header) {
+        switch (role) {
+        case IdRole: return r.id;
+        case ConnTypeRole: return r.headerType;
+        case NameRole:
+            return r.headerType == QLatin1String("mssql") ? tr("Databases") : tr("Remote desktops");
+        default: return {};
+        }
+    }
 
     if (r.folder) {
         const Folder& f = m_folders.at(r.index);
@@ -145,6 +159,8 @@ QVariant ConnectionStore::data(const QModelIndex& index, int role) const
     case DomainRole: return h.domain;
     case ParentRole: return h.folderId;
     case LastConnectedRole: return h.lastConnected;
+    case ConnTypeRole: return h.type;
+    case DatabaseRole: return h.database;
     default: return {};
     }
 }
@@ -174,12 +190,59 @@ void ConnectionStore::appendChildren(QList<Row>& rows, const QString& parentId, 
         return byName(x.name.isEmpty() ? x.host : x.name, y.name.isEmpty() ? y.host : y.name);
     });
     for (int i : folders) {
+        // Hide folders with no connection of the filtered type.
+        if (!m_typeFilter.isEmpty() && !folderHasType(m_folders[i].id, m_typeFilter))
+            continue;
         rows.append({true, i, depth, m_folders[i].id});
         if (m_folders[i].expanded)
             appendChildren(rows, m_folders[i].id, depth + 1);
     }
-    for (int i : hosts)
+
+    // At the top level, group the unfiled hosts under type headers (folders,
+    // which the user organises explicitly, stay above the groups).
+    if (m_groupByType && parentId.isEmpty() && m_typeFilter.isEmpty()) {
+        QList<int> rdp, sql;
+        for (int i : hosts)
+            (m_hosts[i].type == QLatin1String("rdp") ? rdp : sql) << i;
+        if (!rdp.isEmpty()) {
+            rows.append({false, 0, depth, QStringLiteral("hdr:rdp"), true, QStringLiteral("rdp")});
+            for (int i : rdp)
+                rows.append({false, i, depth, m_hosts[i].id});
+        }
+        if (!sql.isEmpty()) {
+            rows.append({false, 0, depth, QStringLiteral("hdr:mssql"), true, QStringLiteral("mssql")});
+            for (int i : sql)
+                rows.append({false, i, depth, m_hosts[i].id});
+        }
+        return;
+    }
+
+    for (int i : hosts) {
+        if (!m_typeFilter.isEmpty() && m_hosts[i].type != m_typeFilter)
+            continue;
         rows.append({false, i, depth, m_hosts[i].id});
+    }
+}
+
+// True if the folder (or any descendant folder) holds a host of `type`.
+bool ConnectionStore::folderHasType(const QString& folderId, const QString& type) const
+{
+    for (const Host& h : m_hosts)
+        if (h.folderId == folderId && h.type == type)
+            return true;
+    for (const Folder& c : m_folders)
+        if (c.parentId == folderId && folderHasType(c.id, type))
+            return true;
+    return false;
+}
+
+void ConnectionStore::setTypeFilter(const QString& t)
+{
+    const QString v = (t == QLatin1String("rdp") || t == QLatin1String("mssql")) ? t : QString();
+    if (m_typeFilter == v)
+        return;
+    m_typeFilter = v;
+    rebuild();
 }
 
 // Rebuilds the visible rows and reports the change as one contiguous
@@ -239,7 +302,11 @@ void ConnectionStore::load()
         h.id = o.value("id").toString();
         h.name = o.value("name").toString();
         h.host = o.value("host").toString();
-        h.port = o.value("port").toInt(3389);
+        h.type = o.value("type").toString(QStringLiteral("rdp"));
+        h.database = o.value("database").toString();
+        const int loadDefPort = h.type == QLatin1String("postgres") ? 5432
+                              : h.type == QLatin1String("mssql") ? 1433 : 3389;
+        h.port = o.value("port").toInt(loadDefPort);
         h.username = o.value("username").toString();
         h.domain = o.value("domain").toString();
         h.folderId = o.value("folderId").toString();
@@ -260,6 +327,7 @@ void ConnectionStore::save() const
                                    {"expanded", f.expanded}});
     for (const Host& h : m_hosts)
         hosts.append(QJsonObject{{"id", h.id}, {"name", h.name}, {"host", h.host},
+                                 {"type", h.type}, {"database", h.database},
                                  {"port", h.port}, {"username", h.username},
                                  {"domain", h.domain}, {"folderId", h.folderId},
                                  {"share", h.share}, {"gateway", h.gateway},
@@ -309,6 +377,8 @@ QVariantMap ConnectionStore::hostMap(const Host& h) const
     return {{"id", h.id},
             {"name", h.name.isEmpty() ? h.host : h.name},
             {"host", h.host},
+            {"type", h.type},
+            {"database", h.database},
             {"port", h.port},
             {"username", h.username},
             {"domain", h.domain},
@@ -355,9 +425,16 @@ QString ConnectionStore::saveHost(const QVariantMap& m)
     Host& h = m_hosts[i];
     h.name = m.value("name").toString().trimmed();
     h.host = m.value("host").toString().trimmed();
-    h.port = m.value("port", 3389).toInt();
+    const QString reqType = m.value("type").toString();
+    h.type = reqType == QLatin1String("mssql") ? QStringLiteral("mssql")
+           : reqType == QLatin1String("postgres") ? QStringLiteral("postgres")
+                                                   : QStringLiteral("rdp");
+    h.database = m.value("database").toString().trimmed();
+    const int defPort = h.type == QLatin1String("postgres") ? 5432
+                      : h.type == QLatin1String("mssql") ? 1433 : 3389;
+    h.port = m.value("port", defPort).toInt();
     if (h.port <= 0 || h.port > 65535)
-        h.port = 3389;
+        h.port = defPort;
     h.username = m.value("username").toString().trimmed();
     h.domain = m.value("domain").toString().trimmed();
     h.folderId = m.value("folderId").toString();

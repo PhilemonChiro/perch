@@ -18,13 +18,29 @@ ApplicationWindow {
     property int current: -1
     readonly property int sidebarW: 268
 
-    // Shown on Home or when the user pins it; tucked away while a session is active.
+    // Shown only when the user opens it (⌘B or the tab-strip button); Home is a
+    // full-width dashboard whose cards already list every connection.
     property bool sidebarPinned: false
     readonly property bool fullscreen: visibility === Window.FullScreen
-    readonly property bool sidebarDocked: !fullscreen && (current < 0 || sidebarPinned)
+    readonly property bool sidebarDocked: !fullscreen && sidebarPinned
 
     function toast(msg, kind) { toaster.show(msg, kind) }
     function closeTab(i) { if (i >= 0) SessionManager.close(i) }
+
+    // A quick-connect string beginning mssql:// / sql:// (SQL Server) or
+    // postgres:// / postgresql:// / pg:// (PostgreSQL) opens a database console
+    // window instead of an RDP session.
+    function isDbTarget(text) { return /^\s*(mssql|sql|postgres|postgresql|pg):\/\//i.test(text) }
+    function openDb(text) { return SessionManager.quickConnectDatabase(text) >= 0 }
+    // Routes a quick-connect string to either the DB console or an RDP session.
+    function quickConnect(text) {
+        if (isDbTarget(text)) {
+            if (!openDb(text)) win.toast(qsTr("That doesn’t look like a database address"), "error")
+            return
+        }
+        if (SessionManager.quickConnect(text) < 0)
+            win.toast(qsTr("That doesn’t look like a host address"), "error")
+    }
     function toggleFullscreen() {
         win.visibility = win.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
     }
@@ -133,32 +149,56 @@ ApplicationWindow {
                     Behavior on opacity { NumberAnimation { duration: Theme.normal } }
                     Behavior on scale { NumberAnimation { duration: Theme.slow; easing.type: Theme.easing } }
                     onConnectHost: id => SessionManager.openHost(id)
-                    onQuickConnect: text => {
-                        if (SessionManager.quickConnect(text) < 0) win.toast(qsTr("That doesn’t look like a host address"), "error")
-                    }
+                    onEditHost: id => editor.openEdit(id)
+                    onQuickConnect: text => win.quickConnect(text)
                     onNewHost: editor.openNew("")
                     onOpenPalette: palette.open()
+                    onToast: (m, k) => win.toast(m, k)
                 }
 
                 Repeater {
                     model: SessionManager
-                    delegate: SessionPage {
+                    delegate: Item {
+                        id: tabHost
                         required property int index
                         required property var session
+                        required property string kind
                         anchors.fill: parent
-                        sessionObj: session
-                        active: index === win.current
-                        fullscreen: win.fullscreen
-                        opacity: active ? 1 : 0
+                        readonly property bool current: index === win.current
+                        opacity: current ? 1 : 0
                         visible: opacity > 0
                         Behavior on opacity { NumberAnimation { duration: Theme.normal } }
-                        onCloseRequested: win.closeTab(index)
-                        onFullscreenRequested: win.toggleFullscreen()
-                        onSaveRequested: editor.openFromSession(session)
-                        onToast: (m, k) => win.toast(m, k)
-                        onManageCredentials: (addNew) => {
-                            credManager.openManager()
-                            if (addNew) credManager.startAddInto((id) => SessionManager.reconnectWithCredential(session, id))
+
+                        Loader {
+                            anchors.fill: parent
+                            sourceComponent: tabHost.kind === "sql" ? sqlComp : rdpComp
+                        }
+                        Component {
+                            id: rdpComp
+                            SessionPage {
+                                anchors.fill: parent
+                                sessionObj: tabHost.session
+                                active: tabHost.current
+                                fullscreen: win.fullscreen
+                                onCloseRequested: win.closeTab(tabHost.index)
+                                onFullscreenRequested: win.toggleFullscreen()
+                                onSaveRequested: editor.openFromSession(tabHost.session)
+                                onToast: (m, k) => win.toast(m, k)
+                                onManageCredentials: (addNew) => {
+                                    credManager.openManager()
+                                    if (addNew) credManager.startAddInto((id) => SessionManager.reconnectWithCredential(tabHost.session, id))
+                                }
+                            }
+                        }
+                        Component {
+                            id: sqlComp
+                            SqlPage {
+                                anchors.fill: parent
+                                sessionObj: tabHost.session
+                                active: tabHost.current
+                                onCloseRequested: win.closeTab(tabHost.index)
+                                onToast: (m, k) => win.toast(m, k)
+                            }
                         }
                     }
                 }
@@ -171,9 +211,7 @@ ApplicationWindow {
         sessionActive: win.current >= 0
         onSendCad: { const s = win.current >= 0 ? SessionManager.at(win.current) : null; if (s) s.sendCtrlAltDel() }
         onConnectHost: id => SessionManager.openHost(id)
-        onQuickConnect: text => {
-            if (SessionManager.quickConnect(text) < 0) win.toast(qsTr("That doesn’t look like a host address"), "error")
-        }
+        onQuickConnect: text => win.quickConnect(text)
         onNewHost: editor.openNew("")
         onNewFolder: { ConnectionStore.addFolder(qsTr("New folder"), ""); win.sidebarPinned = true }
         onGoHome: win.current = -1
@@ -195,6 +233,14 @@ ApplicationWindow {
     }
 
     CredentialManager { id: credManager }
+
+    // Check GitHub for a newer release shortly after launch; prompt if found.
+    UpdateDialog { id: updateDialog }
+    Timer { interval: 2500; running: true; repeat: false; onTriggered: UpdateChecker.checkForUpdates() }
+    Connections {
+        target: UpdateChecker
+        function onCheckFinished(found) { if (found) updateDialog.open() }
+    }
 
     Toast {
         id: toaster

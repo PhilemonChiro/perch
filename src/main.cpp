@@ -8,6 +8,7 @@
 #include <QTimer>
 
 #include "RdpSession.h"
+#include "SqlSession.h"
 #include "SessionManager.h"
 
 int main(int argc, char* argv[])
@@ -51,7 +52,7 @@ int main(int argc, char* argv[])
     if (const QString target = qEnvironmentVariable("RELAY_CONNECT"); !target.isEmpty()) {
         QTimer::singleShot(300, [target] {
             auto* mgr = SessionManager::create(nullptr, nullptr);
-            RdpSession* s = mgr->at(mgr->quickConnect(target));
+            RdpSession* s = qobject_cast<RdpSession*>(mgr->at(mgr->quickConnect(target)));
             if (!s)
                 return;
             if (const int trust = qEnvironmentVariableIntValue("RELAY_TRUST"))
@@ -61,6 +62,24 @@ int main(int argc, char* argv[])
                 });
             if (qEnvironmentVariableIsSet("RELAY_PASSWORD"))
                 s->signIn(s->username(), qEnvironmentVariable("RELAY_PASSWORD"), s->domain(), false);
+        });
+    }
+
+    // Dev aid: RELAY_SQL=[user@]host[:port][/db] opens a SQL Server console tab.
+    // Optional RELAY_SQL_PASSWORD connects it; RELAY_SQL_QUERY runs once live.
+    if (const QString t = qEnvironmentVariable("RELAY_SQL"); !t.isEmpty()) {
+        QTimer::singleShot(300, [t] {
+            auto* mgr = SessionManager::create(nullptr, nullptr);
+            auto* s = qobject_cast<SqlSession*>(mgr->at(mgr->quickConnectDatabase(t)));
+            if (!s)
+                return;
+            if (qEnvironmentVariableIsSet("RELAY_SQL_QUERY"))
+                QObject::connect(s, &SqlSession::stateChanged, s, [s] {
+                    if (s->state() == SqlSession::Connected && s->result()->rowCountProp() == 0)
+                        s->execute(qEnvironmentVariable("RELAY_SQL_QUERY"));
+                });
+            if (qEnvironmentVariableIsSet("RELAY_SQL_PASSWORD"))
+                s->connectWith(qEnvironmentVariable("RELAY_SQL_PASSWORD"));
         });
     }
 

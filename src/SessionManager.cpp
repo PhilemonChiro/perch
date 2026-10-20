@@ -4,6 +4,7 @@
 #include "CredentialStore.h"
 #include "Credentials.h"
 #include "RdpSession.h"
+#include "SqlSession.h"
 
 #include <QClipboard>
 #include <QGuiApplication>
@@ -30,53 +31,76 @@ int SessionManager::rowCount(const QModelIndex& parent) const
 
 QHash<int, QByteArray> SessionManager::roleNames() const
 {
-    return {{SessionRole, "session"}, {TitleRole, "title"}, {StateRole, "state"}, {HostIdRole, "hostId"}};
+    return {{SessionRole, "session"}, {TitleRole, "title"}, {StateRole, "state"},
+            {KindRole, "kind"}, {HostIdRole, "hostId"}};
 }
 
 QVariant SessionManager::data(const QModelIndex& index, int role) const
 {
     if (!index.isValid() || index.row() >= m_sessions.size())
         return {};
-    RdpSession* s = m_sessions.at(index.row());
+    QObject* s = m_sessions.at(index.row());
     if (!s)
         return {};
     switch (role) {
     case SessionRole: return QVariant::fromValue(s);
-    case TitleRole: return s->title();
-    case StateRole: return int(s->state());
-    case HostIdRole: return s->hostId();
+    case TitleRole: return s->property("title");
+    case StateRole: return s->property("phase"); // kind-agnostic lifecycle phase
+    case KindRole: return s->property("kind");
+    case HostIdRole: return s->property("hostId");
     default: return {};
     }
 }
 
-int SessionManager::add(RdpSession* s)
+int SessionManager::add(QObject* s)
 {
     const int row = int(m_sessions.size());
     beginInsertRows({}, row, row);
     m_sessions.append(s);
     endInsertRows();
-    connect(s, &RdpSession::stateChanged, this, [this, s] {
-        const int i = int(m_sessions.indexOf(s));
-        if (i >= 0)
-            emit dataChanged(index(i), index(i), {StateRole});
-    });
-    // Remember the password once a sign-in actually succeeds.
-    connect(s, &RdpSession::connectedWithCredentials, this,
-            [s](const QString& user, const QString& domain, const QString& password, bool remember) {
-                if (s->hostId().isEmpty())
-                    return;
-                auto* store = ConnectionStore::instance();
-                QVariantMap h = store->host(s->hostId());
-                if (!h.isEmpty() && (h.value("username") != user || h.value("domain") != domain)) {
-                    h["username"] = user;
-                    h["domain"] = domain;
-                    store->saveHost(h);
-                }
-                if (remember)
-                    Credentials::write(s->hostId(), password);
-                store->touch(s->hostId());
-            });
-    s->setLocalClipboard(QGuiApplication::clipboard()->text());
+
+    // Re-emit the row's state when the session's phase changes (both kinds have
+    // a stateChanged signal driving their phase).
+    const auto emitState = [this, s] {
+        for (int i = 0; i < m_sessions.size(); ++i)
+            if (m_sessions[i] == s) {
+                emit dataChanged(index(i), index(i), {StateRole});
+                break;
+            }
+    };
+
+    if (auto* r = qobject_cast<RdpSession*>(s)) {
+        connect(r, &RdpSession::stateChanged, this, emitState);
+        // Remember the password once a sign-in actually succeeds.
+        connect(r, &RdpSession::connectedWithCredentials, this,
+                [r](const QString& user, const QString& domain, const QString& password, bool remember) {
+                    if (r->hostId().isEmpty())
+                        return;
+                    auto* store = ConnectionStore::instance();
+                    QVariantMap h = store->host(r->hostId());
+                    if (!h.isEmpty() && (h.value("username") != user || h.value("domain") != domain)) {
+                        h["username"] = user;
+                        h["domain"] = domain;
+                        store->saveHost(h);
+                    }
+                    if (remember)
+                        Credentials::write(r->hostId(), password);
+                    store->touch(r->hostId());
+                });
+        r->setLocalClipboard(QGuiApplication::clipboard()->text());
+    } else if (auto* q = qobject_cast<SqlSession*>(s)) {
+        connect(q, &SqlSession::stateChanged, this, emitState);
+        connect(q, &SqlSession::stateChanged, this, [q] {
+            if (q->state() == SqlSession::Connected && !q->hostId().isEmpty())
+                ConnectionStore::instance()->touch(q->hostId());
+        });
+        // Persist the password to the keychain when the user asked to remember it.
+        connect(q, &SqlSession::rememberPassword, this, [q](const QString& pw) {
+            if (!q->hostId().isEmpty())
+                Credentials::write(q->hostId(), pw);
+        });
+    }
+
     emit countChanged();
     emit opened(row);
     return row;
@@ -85,15 +109,19 @@ int SessionManager::add(RdpSession* s)
 int SessionManager::openHost(const QString& hostId)
 {
     if (const int open = indexOfHost(hostId); open >= 0) {
-        RdpSession* s = m_sessions.at(open);
-        if (s->state() == RdpSession::Disconnected || s->state() == RdpSession::Failed)
-            s->reconnect();
+        if (auto* s = qobject_cast<RdpSession*>(m_sessions.at(open).data())) {
+            if (s->state() == RdpSession::Disconnected || s->state() == RdpSession::Failed)
+                s->reconnect();
+        }
         emit opened(open);
         return open;
     }
     const QVariantMap h = ConnectionStore::instance()->host(hostId);
     if (h.isEmpty())
         return -1;
+    if (const QString t = h.value("type").toString();
+        t == QLatin1String("mssql") || t == QLatin1String("postgres"))
+        return openDatabaseHost(hostId);
     // A connection may reference a saved credential set; otherwise it uses its
     // own inline username/domain with the password stored under the host id.
     QString username = h.value("username").toString();
@@ -129,8 +157,8 @@ int SessionManager::openHost(const QString& hostId)
 int SessionManager::openHostWithPassword(const QString& hostId, const QString& password)
 {
     if (const int open = indexOfHost(hostId); open >= 0) {
-        RdpSession* s = m_sessions.at(open);
-        s->startWithPassword(password);
+        if (auto* s = qobject_cast<RdpSession*>(m_sessions.at(open).data()))
+            s->startWithPassword(password);
         emit opened(open);
         return open;
     }
@@ -193,12 +221,73 @@ int SessionManager::quickConnect(const QString& text)
     return row;
 }
 
+int SessionManager::openDatabaseHost(const QString& hostId)
+{
+    if (const int open = indexOfHost(hostId); open >= 0) {
+        emit opened(open);
+        return open;
+    }
+    const QVariantMap h = ConnectionStore::instance()->host(hostId);
+    if (h.isEmpty())
+        return -1;
+    const QString engine = h.value("type").toString() == QLatin1String("postgres")
+                               ? QStringLiteral("postgres")
+                               : QStringLiteral("mssql");
+    const int defPort = engine == QLatin1String("postgres") ? 5432 : 1433;
+    const int port = h.value("port").toInt() > 0 ? h.value("port").toInt() : defPort;
+    auto* s = new SqlSession(hostId, h.value("host").toString(), port,
+                             h.value("username").toString(), h.value("database").toString(),
+                             engine, this);
+    const int row = add(s);
+    // Auto-connect with a remembered keychain password, if one is stored.
+    QPointer<SqlSession> guard(s);
+    Credentials::read(hostId, [guard](bool found, const QString& pw) {
+        if (guard && found && !pw.isEmpty())
+            guard->connectWith(pw, true);
+    });
+    return row;
+}
+
+int SessionManager::quickConnectDatabase(const QString& text)
+{
+    QString rest = text.trimmed();
+    static const QRegularExpression scheme(QStringLiteral("^(postgres|postgresql|pg|mssql|sql)://"),
+                                           QRegularExpression::CaseInsensitiveOption);
+    const auto sm = scheme.match(rest);
+    const QString engine = (sm.hasMatch()
+                            && sm.captured(1).compare(QLatin1String("mssql"), Qt::CaseInsensitive) != 0
+                            && sm.captured(1).compare(QLatin1String("sql"), Qt::CaseInsensitive) != 0)
+                               ? QStringLiteral("postgres")
+                               : QStringLiteral("mssql");
+    rest.remove(scheme);
+    QString user, database;
+    if (const int at = rest.indexOf(QLatin1Char('@')); at >= 0) {
+        user = rest.left(at);
+        rest = rest.mid(at + 1);
+    }
+    if (const int slash = rest.indexOf(QLatin1Char('/')); slash >= 0) {
+        database = rest.mid(slash + 1);
+        rest = rest.left(slash);
+    }
+    QString host = rest;
+    int port = engine == QLatin1String("postgres") ? 5432 : 1433;
+    if (const int colon = rest.lastIndexOf(QLatin1Char(':')); colon >= 0) {
+        host = rest.left(colon);
+        if (const int p = rest.mid(colon + 1).toInt(); p > 0)
+            port = p;
+    }
+    if (host.isEmpty())
+        return -1;
+    auto* s = new SqlSession(QString(), host, port, user, database, engine, this);
+    return add(s);
+}
+
 void SessionManager::close(int i)
 {
     if (i < 0 || i >= m_sessions.size())
         return;
     beginRemoveRows({}, i, i);
-    RdpSession* s = m_sessions.takeAt(i);
+    QObject* s = m_sessions.takeAt(i);
     endRemoveRows();
     if (s)
         s->deleteLater();
@@ -215,7 +304,7 @@ void SessionManager::move(int from, int to)
     endMoveRows();
 }
 
-RdpSession* SessionManager::at(int i) const
+QObject* SessionManager::at(int i) const
 {
     return i >= 0 && i < m_sessions.size() ? m_sessions.at(i).data() : nullptr;
 }
@@ -225,7 +314,7 @@ int SessionManager::indexOfHost(const QString& hostId) const
     if (hostId.isEmpty())
         return -1;
     for (int i = 0; i < m_sessions.size(); ++i)
-        if (m_sessions[i] && m_sessions[i]->hostId() == hostId)
+        if (m_sessions[i] && m_sessions[i]->property("hostId").toString() == hostId)
             return i;
     return -1;
 }
@@ -245,6 +334,6 @@ void SessionManager::broadcastClipboard()
 {
     const QString text = QGuiApplication::clipboard()->text();
     for (const auto& s : std::as_const(m_sessions))
-        if (s)
-            s->setLocalClipboard(text);
+        if (auto* r = qobject_cast<RdpSession*>(s.data()))
+            r->setLocalClipboard(text);
 }

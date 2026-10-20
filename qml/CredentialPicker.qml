@@ -76,7 +76,7 @@ ComboBox {
         }
         background: Rectangle {
             radius: Theme.radiusSm
-            color: cd.highlighted ? Theme.surface3 : "transparent"
+            color: cd.highlighted ? Theme.hover : "transparent"
             anchors.fill: parent
             anchors.topMargin: cd.firstAction ? 9 : 0
         }

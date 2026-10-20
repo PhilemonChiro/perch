@@ -4,11 +4,42 @@ project(Relay VERSION 0.1.3 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.9 REQUIRED COMPONENTS Gui Quick QuickControls2)
+find_package(Qt6 6.9 REQUIRED COMPONENTS Gui Quick QuickControls2 Network)
 find_package(Qt6Keychain REQUIRED)
 find_package(WinPR 3 REQUIRED)
 find_package(FreeRDP 3 REQUIRED)
 find_package(FreeRDP-Client 3 REQUIRED)
+
+# FreeTDS (db-lib) powers the SQL Server connector. It ships no upstream CMake
+# package, so locate the header and the sybdb library directly, with Homebrew /
+# apt / vcpkg hints.
+find_path(FREETDS_INCLUDE_DIR NAMES sybdb.h
+    HINTS /opt/homebrew/opt/freetds/include /usr/local/opt/freetds/include
+          /usr/include /usr/local/include
+          $ENV{VCPKG_INSTALLATION_ROOT}/installed/x64-windows/include)
+find_library(FREETDS_LIBRARY NAMES sybdb
+    HINTS /opt/homebrew/opt/freetds/lib /usr/local/opt/freetds/lib
+          /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+          $ENV{VCPKG_INSTALLATION_ROOT}/installed/x64-windows/lib)
+if(NOT FREETDS_INCLUDE_DIR OR NOT FREETDS_LIBRARY)
+    message(FATAL_ERROR "FreeTDS (sybdb.h / libsybdb) not found; install freetds")
+endif()
+
+# libpq powers the PostgreSQL connector. Homebrew keeps it keg-only, so hint its
+# opt prefix alongside the usual system and vcpkg locations.
+find_path(LIBPQ_INCLUDE_DIR NAMES libpq-fe.h
+    HINTS /opt/homebrew/opt/libpq/include /usr/local/opt/libpq/include
+          /opt/homebrew/opt/postgresql/include /usr/local/opt/postgresql/include
+          /usr/include /usr/include/postgresql /usr/local/include
+          $ENV{VCPKG_INSTALLATION_ROOT}/installed/x64-windows/include)
+find_library(LIBPQ_LIBRARY NAMES pq libpq
+    HINTS /opt/homebrew/opt/libpq/lib /usr/local/opt/libpq/lib
+          /opt/homebrew/opt/postgresql/lib /usr/local/opt/postgresql/lib
+          /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+          $ENV{VCPKG_INSTALLATION_ROOT}/installed/x64-windows/lib)
+if(NOT LIBPQ_INCLUDE_DIR OR NOT LIBPQ_LIBRARY)
+    message(FATAL_ERROR "libpq (libpq-fe.h / libpq) not found; install libpq or postgresql")
+endif()
 
 qt_standard_project_setup(REQUIRES 6.9)
 
@@ -30,6 +61,15 @@ qt_add_qml_module(relay
         src/SessionManager.h src/SessionManager.cpp
         src/RdpSession.h src/RdpSession.cpp
         src/RdpView.h src/RdpView.cpp
+        src/SqlResultModel.h
+        src/SqlHighlighter.h
+        src/Clipboard.h
+        src/SqlBackend.h
+        src/TdsBackend.h src/TdsBackend.cpp
+        src/PgBackend.h src/PgBackend.cpp
+        src/SqlSession.h src/SqlSession.cpp
+        src/QueryStore.h src/QueryStore.cpp
+        src/UpdateChecker.h src/UpdateChecker.cpp
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
@@ -41,6 +81,7 @@ qt_add_qml_module(relay
         qml/ConnectionEditor.qml
         qml/CredentialManager.qml
         qml/CredentialPicker.qml
+        qml/SqlPage.qml
         qml/components/Icon.qml
         qml/components/IconButton.qml
         qml/components/PrimaryButton.qml
@@ -51,10 +92,17 @@ qt_add_qml_module(relay
         qml/components/Card.qml
         qml/components/Toast.qml
         qml/components/Toggle.qml
+        qml/components/ResultGrid.qml
+        qml/UpdateDialog.qml
     RESOURCES ${RELAY_ICONS}
 )
 
-target_include_directories(relay PRIVATE src)
+target_include_directories(relay PRIVATE src ${FREETDS_INCLUDE_DIR} ${LIBPQ_INCLUDE_DIR})
+
+# App version (for the in-app update check) and the GitHub repo to query.
+target_compile_definitions(relay PRIVATE
+    APP_VERSION=${PROJECT_VERSION}
+    UPDATE_REPO="PhilemonChiro/perch")
 
 # WinPR/FreeRDP headers pull in <windows.h>; NOMINMAX keeps its min/max macros
 # from clobbering std::min/std::max. WIN32_LEAN_AND_MEAN trims the include.
@@ -63,9 +111,11 @@ if(WIN32)
 endif()
 
 target_link_libraries(relay PRIVATE
-    Qt6::Gui Qt6::Quick Qt6::QuickControls2
+    Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Network
     Qt6Keychain::Qt6Keychain
     winpr freerdp freerdp-client
+    ${FREETDS_LIBRARY}
+    ${LIBPQ_LIBRARY}
 )
 
 # The output binary is "Perch". (The QML module dir is "Relay", so there is no

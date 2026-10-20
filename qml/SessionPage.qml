@@ -180,7 +180,7 @@ Item {
                 color: mmi.danger ? Theme.danger : Theme.text
                 font.pixelSize: Theme.fontMd; verticalAlignment: Text.AlignVCenter
             }
-            background: Rectangle { radius: Theme.radiusSm; color: mmi.highlighted ? (mmi.danger ? Theme.dangerSoft : Theme.surface3) : "transparent" }
+            background: Rectangle { radius: Theme.radiusSm; color: mmi.highlighted ? (mmi.danger ? Theme.dangerSoft : Theme.hover) : "transparent" }
         }
         Action { text: qsTr("Change folder…"); onTriggered: folderDialog.open() }
         MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: Theme.border } }
