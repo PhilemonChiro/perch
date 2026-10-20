@@ -208,33 +208,45 @@ jobs:
           # file, not a fixed list. Source: the toolchain redist CRT folder when
           # present, plus the installed copies in System32 (present because VS is
           # installed); cp -n keeps whichever landed first.
-          copy_glob() {
-            local dir="$1" pat f
-            for pat in 'MSVCP140*.dll' 'VCRUNTIME140*.dll' 'CONCRT140*.dll'; do
-              for f in "$dir"/$pat; do [ -f "$f" ] && cp -n "$f" dist/; done
-            done
-            return 0  # never let an unmatched glob abort the step under `set -e`
+          # Copy every MSVCP140*/VCRUNTIME140*/CONCRT140* DLL found anywhere under
+          # a given directory into dist/ (the SQL client DLLs pull in extra CRT
+          # parts such as MSVCP140_2.dll, so match by glob, not a fixed list).
+          collect_from() {
+            local base="$1" b
+            [ -z "$base" ] && return 0
+            b="$(cygpath -u "$base" 2>/dev/null || echo "$base")"
+            [ -d "$b" ] || return 0
+            find "$b" \( -iname 'MSVCP140*.dll' -o -iname 'VCRUNTIME140*.dll' -o -iname 'CONCRT140*.dll' \) \
+              -exec cp -n {} dist/ \; 2>/dev/null || true
+            return 0
           }
-          # Try loose DLLs first: the toolchain redist CRT folder, then System32.
-          if [ -n "${VCToolsRedistDir:-}" ]; then
-            redist="$(cygpath -u "$VCToolsRedistDir" 2>/dev/null || echo "$VCToolsRedistDir")"
-            crt="$(find "$redist" -ipath '*x64*' -iname 'Microsoft.VC*.CRT' -type d 2>/dev/null | head -1)"
-            [ -n "$crt" ] && copy_glob "$crt"
-          fi
-          copy_glob /c/Windows/System32
-          # The runner images ship the CRT only as the vc_redist installer bundle
-          # (no loose DLLs in System32 or the redist tree), so install it — the
-          # runner is admin — to populate System32, then copy the DLLs app-local.
-          if [ ! -f dist/MSVCP140.dll ] && [ -f dist/vc_redist.x64.exe ]; then
-            MSYS_NO_PATHCONV=1 powershell -NoProfile -Command \
-              "Start-Process -FilePath 'dist\\vc_redist.x64.exe' -ArgumentList '/install','/quiet','/norestart' -Wait" || true
-            copy_glob /c/Windows/System32
+          # 1) Loose DLLs already on disk: the VS redist tree and the System dirs.
+          collect_from "${VCToolsRedistDir:-}"
+          collect_from "${VCINSTALLDIR:-}"
+          collect_from /c/Windows/System32
+          # 2) Still missing? Install the VC++ redistributable (the runner is admin)
+          #    to populate System32, then re-scan. Try the bundled installer and
+          #    choco — whichever is available.
+          if [ ! -f dist/MSVCP140.dll ]; then
+            echo "Loose CRT DLLs not found; installing the VC++ redistributable..."
+            [ -f dist/vc_redist.x64.exe ] && MSYS_NO_PATHCONV=1 powershell -NoProfile -Command \
+              "Start-Process -FilePath 'dist\\vc_redist.x64.exe' -ArgumentList '/install','/quiet','/norestart' -Wait -Verb RunAs" || true
+            command -v choco >/dev/null 2>&1 && choco install vcredist140 -y --no-progress >/dev/null 2>&1 || true
+            collect_from /c/Windows/System32
           fi
           # vc_redist.x64.exe is the installer, not a dependency; drop it from the app dir.
           rm -f dist/vc_redist.x64.exe
-          # Fail loudly if any required runtime DLL is still missing.
+          echo "Runtime DLLs collected into dist/:"
+          ls dist/ | grep -iE 'MSVCP140|VCRUNTIME140|CONCRT140' || echo "  (none)"
+          # Fail loudly if any required runtime DLL is still missing, dumping where
+          # the DLLs actually live so the source can be fixed without guessing.
           for d in MSVCP140.dll MSVCP140_2.dll VCRUNTIME140.dll VCRUNTIME140_1.dll; do
-            [ -f "dist/$d" ] || { echo "ERROR: $d missing from dist/"; ls -la dist/; exit 1; }
+            [ -f "dist/$d" ] || {
+              echo "ERROR: $d missing from dist/"
+              echo "--- locations of MSVCP140.dll on the runner ---"
+              find /c/Windows /c/Program\ Files \( -iname 'MSVCP140.dll' -o -iname 'vcruntime140.dll' \) 2>/dev/null | head -20
+              exit 1
+            }
           done
           # NLA needs OpenSSL's legacy provider (MD4/RC4); ship and activate it.
           bash .github/scripts/bundle-openssl-legacy-win.sh dist
