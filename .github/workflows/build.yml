@@ -162,29 +162,29 @@ jobs:
           # VCRUNTIME140*.dll) app-local so machines without the VC++
           # Redistributable installed can still launch Perch.
           windeployqt --qmldir qml --release --compiler-runtime dist/Perch.exe
-          # windeployqt --compiler-runtime drops vc_redist.x64.exe (the installer),
-          # not the loose DLLs, so copy the runtime DLLs ourselves: first from the
-          # toolchain redist tree (when it ships unpacked CRT folders), else from
-          # the installed copies in System32 (present because VS is installed).
-          copy_runtime() {
-            local name="$1"
-            [ -f "dist/$name" ] && return 0
-            if [ -n "${VCToolsRedistDir:-}" ]; then
-              local redist hit
-              redist="$(cygpath -u "$VCToolsRedistDir" 2>/dev/null || echo "$VCToolsRedistDir")"
-              hit="$(find "$redist" -ipath '*x64*' -name "$name" 2>/dev/null | head -1)"
-              [ -n "$hit" ] && { cp "$hit" dist/; return 0; }
-            fi
-            [ -f "/c/Windows/System32/$name" ] && { cp "/c/Windows/System32/$name" dist/; return 0; }
-            return 1
+          # windeployqt --compiler-runtime only drops vc_redist.x64.exe (the
+          # installer), not the loose DLLs, so copy the whole MSVC runtime DLL set
+          # ourselves. The SQL client DLLs (freetds/libpq) pull in extra CRT parts
+          # such as MSVCP140_2.dll, so copy every MSVCP140*/VCRUNTIME140*/CONCRT140*
+          # file, not a fixed list. Source: the toolchain redist CRT folder when
+          # present, plus the installed copies in System32 (present because VS is
+          # installed); cp -n keeps whichever landed first.
+          copy_glob() {
+            local dir="$1" pat f
+            for pat in 'MSVCP140*.dll' 'VCRUNTIME140*.dll' 'CONCRT140*.dll'; do
+              for f in "$dir"/$pat; do [ -f "$f" ] && cp -n "$f" dist/; done
+            done
           }
-          for d in MSVCP140.dll VCRUNTIME140.dll VCRUNTIME140_1.dll CONCRT140.dll; do
-            copy_runtime "$d" || true
-          done
+          if [ -n "${VCToolsRedistDir:-}" ]; then
+            redist="$(cygpath -u "$VCToolsRedistDir" 2>/dev/null || echo "$VCToolsRedistDir")"
+            crt="$(find "$redist" -ipath '*x64*' -iname 'Microsoft.VC*.CRT' -type d 2>/dev/null | head -1)"
+            [ -n "$crt" ] && copy_glob "$crt"
+          fi
+          copy_glob /c/Windows/System32
           # vc_redist.x64.exe is the installer, not a dependency; drop it from the app dir.
           rm -f dist/vc_redist.x64.exe
-          # Fail loudly if the three required runtime DLLs still aren't present.
-          for d in MSVCP140.dll VCRUNTIME140.dll VCRUNTIME140_1.dll; do
+          # Fail loudly if any required runtime DLL is still missing.
+          for d in MSVCP140.dll MSVCP140_2.dll VCRUNTIME140.dll VCRUNTIME140_1.dll; do
             [ -f "dist/$d" ] || { echo "ERROR: $d missing from dist/"; ls -la dist/; exit 1; }
           done
           # NLA needs OpenSSL's legacy provider (MD4/RC4); ship and activate it.
