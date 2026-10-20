@@ -123,6 +123,9 @@ jobs:
           [ -n "${CMAKE_TOOLCHAIN_FILE:-}" ] && EXTRA+=("-DCMAKE_TOOLCHAIN_FILE=$CMAKE_TOOLCHAIN_FILE")
           [ "$RUNNER_OS" = macOS ] && EXTRA+=("-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/deps;/opt/homebrew") \
                                    || EXTRA+=("-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/deps")
+          # Compile the real release version (from the v* tag) into the binary so
+          # the in-app update check reports the version actually running.
+          [ -n "${GITHUB_REF_NAME:-}" ] && EXTRA+=("-DPERCH_VERSION=${GITHUB_REF_NAME#v}")
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "${EXTRA[@]}"
 
       - name: Build
@@ -212,12 +215,21 @@ jobs:
             done
             return 0  # never let an unmatched glob abort the step under `set -e`
           }
+          # Try loose DLLs first: the toolchain redist CRT folder, then System32.
           if [ -n "${VCToolsRedistDir:-}" ]; then
             redist="$(cygpath -u "$VCToolsRedistDir" 2>/dev/null || echo "$VCToolsRedistDir")"
             crt="$(find "$redist" -ipath '*x64*' -iname 'Microsoft.VC*.CRT' -type d 2>/dev/null | head -1)"
             [ -n "$crt" ] && copy_glob "$crt"
           fi
           copy_glob /c/Windows/System32
+          # The runner images ship the CRT only as the vc_redist installer bundle
+          # (no loose DLLs in System32 or the redist tree), so install it — the
+          # runner is admin — to populate System32, then copy the DLLs app-local.
+          if [ ! -f dist/MSVCP140.dll ] && [ -f dist/vc_redist.x64.exe ]; then
+            MSYS_NO_PATHCONV=1 powershell -NoProfile -Command \
+              "Start-Process -FilePath 'dist\\vc_redist.x64.exe' -ArgumentList '/install','/quiet','/norestart' -Wait" || true
+            copy_glob /c/Windows/System32
+          fi
           # vc_redist.x64.exe is the installer, not a dependency; drop it from the app dir.
           rm -f dist/vc_redist.x64.exe
           # Fail loudly if any required runtime DLL is still missing.

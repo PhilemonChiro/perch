@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.21)
-project(Relay VERSION 0.1.3 LANGUAGES C CXX)
+project(Relay VERSION 0.1.4 LANGUAGES C CXX)
+
+# The app version string compiled into the binary for the in-app update check.
+# Defaults to the project version; CI overrides it from the release tag so a
+# tagged build reports its real version (and never prompts to "update" to the
+# version already running).
+set(PERCH_VERSION "${PROJECT_VERSION}" CACHE STRING "App version string")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -101,7 +107,7 @@ target_include_directories(relay PRIVATE src ${FREETDS_INCLUDE_DIR} ${LIBPQ_INCL
 
 # App version (for the in-app update check) and the GitHub repo to query.
 target_compile_definitions(relay PRIVATE
-    APP_VERSION=${PROJECT_VERSION}
+    APP_VERSION=${PERCH_VERSION}
     UPDATE_REPO="PhilemonChiro/perch")
 
 # WinPR/FreeRDP headers pull in <windows.h>; NOMINMAX keeps its min/max macros
