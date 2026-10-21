@@ -168,6 +168,40 @@ QVariantList PgBackend::objectList()
     return out;
 }
 
+// Column names for every table/view/matview, grouped by "schema.name", for
+// editor autocompletion. Read straight from pg_attribute, in column order.
+QVariantMap PgBackend::columnList()
+{
+    QVariantMap out;
+    if (!m_conn)
+        return out;
+    const QString sql = QStringLiteral(
+        "SELECT n.nspname || '.' || c.relname AS tbl, a.attname "
+        "FROM pg_attribute a "
+        "JOIN pg_class c ON c.oid = a.attrelid "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE a.attnum > 0 AND NOT a.attisdropped "
+        "  AND c.relkind IN ('r', 'p', 'v', 'm') "
+        "  AND n.nspname NOT IN ('pg_catalog', 'information_schema') "
+        "  AND n.nspname NOT LIKE 'pg_temp%' AND n.nspname NOT LIKE 'pg_toast%' "
+        "ORDER BY c.oid, a.attnum");
+    PGresult* res = PQexec(m_conn, sql.toUtf8().constData());
+    if (res && PQresultStatus(res) == PGRES_TUPLES_OK) {
+        const int n = PQntuples(res);
+        for (int r = 0; r < n; ++r) {
+            if (PQgetisnull(res, r, 0))
+                continue;
+            const QString tbl = QString::fromUtf8(PQgetvalue(res, r, 0));
+            QVariantList cur = out.value(tbl).toList();
+            cur.append(QString::fromUtf8(PQgetvalue(res, r, 1)));
+            out.insert(tbl, cur);
+        }
+    }
+    if (res)
+        PQclear(res);
+    return out;
+}
+
 bool PgBackend::runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err)
 {
     if (!m_conn) {

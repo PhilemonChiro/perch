@@ -19,6 +19,7 @@ public:
     bool runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err) override;
     void switchDatabase(const QString& name, QString& currentDb, QVariantList& objects) override;
     void refreshObjects(QVariantList& objects) override { if (m_proc) objects = objectList(); }
+    void columnMap(QVariantMap& columns) override { if (m_proc) columns = columnList(); }
     void stats(const QString& table, qint64& rowCount, qint64& sizeKb) override;
 
     // Appended to by the global db-lib error/message handlers for the current
@@ -29,6 +30,7 @@ private:
     QStringList databaseList();
     QString currentDb();
     QVariantList objectList();
+    QVariantMap columnList();
     bool runQuery(const QString& sql, QStringList& columns, QVector<QStringList>& rows,
                   int& affected, QString& err);
     QString cell(int c);

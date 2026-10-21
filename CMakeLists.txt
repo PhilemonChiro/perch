@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(Relay VERSION 0.1.4 LANGUAGES C CXX)
+project(Relay VERSION 0.1.5 LANGUAGES C CXX)
 
 # The app version string compiled into the binary for the in-app update check.
 # Defaults to the project version; CI overrides it from the release tag so a

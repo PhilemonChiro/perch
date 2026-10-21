@@ -26,6 +26,14 @@ Item {
     readonly property bool busy: st === SqlSession.Connecting || st === SqlSession.Executing
     readonly property bool paused: st === SqlSession.Paused || st === SqlSession.Disconnected
 
+    // Connect-gate sub-states (first connection only).
+    readonly property bool gateConnecting: st === SqlSession.Connecting
+    // Ask for a password: never tried yet, or the last failure was an auth error.
+    readonly property bool gateAuth: sessionObj && (st === SqlSession.Idle
+                        || (st === SqlSession.Failed && sessionObj.errorIsAuth))
+    // A non-auth failure (server unreachable, network): show the error + Retry.
+    readonly property bool gateServerError: sessionObj && st === SqlSession.Failed && !sessionObj.errorIsAuth
+
     // Saved queries are grouped by the server they belong to ("host:port").
     readonly property string serverKey: sessionObj ? (sessionObj.host + ":" + sessionObj.port) : ""
     property var savedQueries: []
@@ -128,16 +136,235 @@ Item {
         return Qt.formatDate(d, "MMM d")
     }
 
+    // Ranges [{start,end}] in the editor of the statements the last run executed;
+    // used to mark each ran query (gutter square + band) and match its result tab.
+    property var ranRanges: []
+    // How many statements the editor currently holds (to decide whether marking
+    // which one ran is meaningful).
+    readonly property int editorStmtCount: editor ? page.splitStatements(editor.text, 0).length : 0
+
+    // ---- Query tabs: several independent editors on one connection ----
+    property var queryTabs: [{ text: "SELECT TOP 100 * FROM INFORMATION_SCHEMA.TABLES" }]
+    property int activeQuery: 0
+    property int lastRunTab: -1   // which query tab produced the live results
+    // Per-tab detached result snapshots (parallel to queryTabs), so switching
+    // tabs shows that query's results without re-running. null until a tab runs.
+    property var queryResults: [null]
+    function saveActiveText() {
+        if (!editor || activeQuery < 0 || activeQuery >= queryTabs.length) return
+        queryTabs[activeQuery].text = editor.text
+    }
+    // Snapshot the currently-live results into their owning tab, so they survive
+    // when another tab's query reuses the session's live models.
+    function captureLiveResults() {
+        if (!sessionObj || lastRunTab < 0 || lastRunTab >= queryResults.length) return
+        const arr = queryResults.slice()
+        arr[lastRunTab] = sessionObj.snapshotResults()
+        queryResults = arr
+    }
+    function selectQueryTab(i) {
+        if (i === activeQuery || i < 0 || i >= queryTabs.length) return
+        saveActiveText()
+        captureLiveResults()
+        activeQuery = i
+        editor.text = queryTabs[i].text
+        editor.cursorPosition = editor.length
+        editor.forceActiveFocus()
+    }
+    function newQueryTab() {
+        saveActiveText()
+        captureLiveResults()
+        const arr = queryTabs.slice()
+        arr.push({ text: "" })
+        queryTabs = arr
+        const res = queryResults.slice()
+        res.push(null)
+        queryResults = res
+        activeQuery = arr.length - 1
+        editor.text = ""
+        editor.forceActiveFocus()
+    }
+    function closeQueryTab(i) {
+        if (queryTabs.length <= 1 || i < 0 || i >= queryTabs.length) return
+        if (i === activeQuery) saveActiveText()
+        else captureLiveResults()
+        const arr = queryTabs.slice()
+        arr.splice(i, 1)
+        const res = queryResults.slice()
+        res.splice(i, 1)
+        queryResults = res
+        // Keep results/markers pointing at the right tab after the shift.
+        if (lastRunTab === i) lastRunTab = -1
+        else if (lastRunTab > i) lastRunTab--
+        let a = activeQuery
+        if (i < a) a--
+        else if (i === a) a = Math.min(i, arr.length - 1)
+        queryTabs = arr
+        activeQuery = a
+        editor.text = queryTabs[a].text
+        editor.cursorPosition = editor.length
+    }
+    // Distinct colour per result/query: hues spread by the golden angle so even
+    // adjacent indices are far apart on the wheel, staying distinguishable well
+    // past 20 queries. Saturation/lightness tuned per theme to stay enterprise-muted.
+    function resultColor(i) {
+        const h = (((i * 137.508) % 360) + 360) % 360 / 360
+        return Theme.dark ? Qt.hsla(h, 0.58, 0.66, 1) : Qt.hsla(h, 0.66, 0.46, 1)
+    }
+    // Splits a SQL batch into statement start offsets, honouring string/comment
+    // literals and both separators used in practice: ';' and a new line that
+    // begins with a statement keyword (T-SQL often omits ';').
+    function splitStatements(sql, base) {
+        const kw = /^(select|insert|update|delete|with|merge|exec|execute|call|create|alter|drop|truncate|declare|set|use|grant|revoke)\b/i
+        const starts = []
+        let i = 0; const n = sql.length
+        let line = false, block = false, s = false, d = false
+        let cur = -1, lineStart = true
+        while (i < n) {
+            const c = sql.charAt(i), c2 = sql.charAt(i + 1)
+            if (line) { if (c === '\n') { line = false; lineStart = true } i++; continue }
+            if (block) { if (c === '*' && c2 === '/') { block = false; i += 2; continue } i++; continue }
+            if (s) { if (c === "'") { if (c2 === "'") { i += 2; continue } s = false } i++; continue }
+            if (d) { if (c === '"') { if (c2 === '"') { i += 2; continue } d = false } i++; continue }
+            if (c === '-' && c2 === '-') { line = true; i += 2; continue }
+            if (c === '/' && c2 === '*') { block = true; i += 2; continue }
+            if (c === '\n') { lineStart = true; i++; continue }
+            if (c === ' ' || c === '\t' || c === '\r') { i++; continue }
+            if (c === "'") { if (cur < 0) cur = i; s = true; lineStart = false; i++; continue }
+            if (c === '"') { if (cur < 0) cur = i; d = true; lineStart = false; i++; continue }
+            if (c === ';') { if (cur >= 0) { starts.push(base + cur); cur = -1 } lineStart = true; i++; continue }
+            if (lineStart && cur >= 0 && kw.test(sql.substring(i))) { starts.push(base + cur); cur = i }
+            if (cur < 0) cur = i
+            lineStart = false
+            i++
+        }
+        if (cur >= 0) starts.push(base + cur)
+        return starts
+    }
+
     function run() {
         if (!sessionObj) return
+        page.saveActiveText()
+        page.lastRunTab = page.activeQuery
         const sel = editor.selectedText
-        sessionObj.execute(sel.length > 0 ? sel : editor.text)
+        const sql = sel.length > 0 ? sel : editor.text
+        const base = sel.length > 0 ? editor.selectionStart : 0
+        const starts = page.splitStatements(sql, base)
+        const end = base + sql.length
+        const ranges = []
+        for (let i = 0; i < starts.length; i++)
+            ranges.push({ start: starts[i], end: i + 1 < starts.length ? starts[i + 1] : end })
+        page.ranRanges = ranges
+        sessionObj.execute(sql)
     }
     function fmtSize(kb) {
         if (kb < 0) return ""
         if (kb < 1024) return kb + " KB"
         if (kb < 1048576) return (kb / 1024).toFixed(1) + " MB"
         return (kb / 1048576).toFixed(2) + " GB"
+    }
+
+    // ---- SQL autocompletion ----
+    readonly property var sqlKeywords: [
+        "SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "HAVING", "JOIN",
+        "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN", "CROSS JOIN", "ON",
+        "AS", "AND", "OR", "NOT", "IN", "LIKE", "BETWEEN", "IS NULL", "IS NOT NULL",
+        "INSERT INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "ALTER",
+        "DROP", "TABLE", "VIEW", "INDEX", "DISTINCT", "TOP", "LIMIT", "OFFSET",
+        "UNION", "UNION ALL", "EXISTS", "CASE", "WHEN", "THEN", "ELSE", "END",
+        "ASC", "DESC", "WITH", "EXEC", "CALL", "RETURNING", "INTO", "USING"
+    ]
+    readonly property var sqlFunctions: [
+        "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "NULLIF", "CAST", "CONVERT",
+        "ROUND", "ABS", "LEN", "LENGTH", "SUBSTRING", "REPLACE", "TRIM", "LOWER",
+        "UPPER", "CONCAT", "NOW", "GETDATE", "CURRENT_TIMESTAMP", "DATEADD",
+        "DATEDIFF", "ROW_NUMBER", "RANK", "DENSE_RANK", "OVER", "PARTITION BY"
+    ]
+    function acColor(kind) {
+        switch (kind) {
+        case "keyword": return Theme.sqlKeyword
+        case "function": return Theme.sqlFunction
+        case "table": return Theme.sqlTag
+        case "view": return Theme.accent
+        case "procedure": return Theme.warning
+        case "column": return Theme.accent2
+        default: return Theme.textFaint
+        }
+    }
+    // Resolve a qualifier (schema.table, bare table name, or a FROM/JOIN alias)
+    // to a "schema.table" key present in the column map.
+    function acResolveTable(qualifier, text) {
+        const cols = sessionObj ? sessionObj.columns : ({})
+        const q = qualifier.toLowerCase()
+        const matchKey = (name) => {
+            const n = name.toLowerCase()
+            for (const t in cols) {
+                if (t.toLowerCase() === n) return t
+                const bare = t.indexOf(".") >= 0 ? t.substring(t.indexOf(".") + 1) : t
+                if (bare.toLowerCase() === n) return t
+            }
+            return ""
+        }
+        const direct = matchKey(qualifier)
+        if (direct) return direct
+        // alias: FROM/JOIN <table> [AS] <alias>
+        const re = /\b(?:from|join)\s+([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)\s+(?:as\s+)?([a-zA-Z_][\w]*)/gi
+        let m
+        while ((m = re.exec(text)) !== null)
+            if (m[2].toLowerCase() === q)
+                return matchKey(m[1]) || m[1]
+        return ""
+    }
+    // Build ranked completion candidates: [{text, kind}]. `qualifier` is the part
+    // before a dot (if any), `partial` the word being typed, `tokenStart` its index.
+    function acCandidates(qualifier, partial, text, tokenStart) {
+        const cols = sessionObj ? sessionObj.columns : ({})
+        const objs = sessionObj ? sessionObj.objects : []
+        const p = partial.toLowerCase()
+        const out = []
+        const push = (name, kind) => {
+            if (!name) return
+            const n = name.toLowerCase()
+            const at = n.indexOf(p)
+            if (p === "" || at !== -1) out.push({ text: name, kind: kind, rank: at === 0 ? 0 : 1 })
+        }
+        if (qualifier !== "") {
+            const table = acResolveTable(qualifier, text)
+            if (table && cols[table]) {
+                for (const c of cols[table]) push(c, "column")
+            } else {
+                // qualifier may be a schema — suggest its objects
+                const pre = qualifier.toLowerCase() + "."
+                for (const o of objs)
+                    if (o.name.toLowerCase().indexOf(pre) === 0)
+                        push(o.name.substring(qualifier.length + 1), o.type)
+            }
+        } else {
+            const before = text.substring(0, tokenStart).toLowerCase()
+            const mm = before.match(/([a-z_]+)\s+$/)
+            const prev = mm ? mm[1] : ""
+            const tableCtx = ["from", "join", "into", "update", "table"].indexOf(prev) !== -1
+            for (const o of objs) {
+                push(o.name, o.type)
+                const bare = o.name.indexOf(".") >= 0 ? o.name.substring(o.name.indexOf(".") + 1) : o.name
+                if (bare !== o.name) push(bare, o.type)
+            }
+            if (!tableCtx) {
+                for (const k of sqlKeywords) push(k, "keyword")
+                for (const f of sqlFunctions) push(f, "function")
+                const seen = ({})
+                for (const t in cols)
+                    for (const c of cols[t]) {
+                        const key = c.toLowerCase()
+                        if (!seen[key]) { seen[key] = 1; push(c, "column") }
+                    }
+            }
+        }
+        out.sort((a, b) => a.rank - b.rank || a.text.length - b.text.length
+                           || (a.text.toLowerCase() < b.text.toLowerCase() ? -1 : 1))
+        const uniq = [], seen2 = ({})
+        for (const o of out) { const k = o.kind + ":" + o.text; if (!seen2[k]) { seen2[k] = 1; uniq.push(o) } }
+        return uniq.slice(0, 12)
     }
 
     onActiveChanged: if (active && everConnected) editor.forceActiveFocus()
@@ -184,9 +411,11 @@ Item {
                         color: Theme.textFaint; font.pixelSize: Theme.fontSm; font.family: Theme.monoFamily
                     }
                 }
+                // Error banner — shown once we've stopped (server error or auth
+                // failure), not during the connecting/retrying phase.
                 Rectangle {
                     Layout.fillWidth: true
-                    visible: sessionObj && sessionObj.errorText !== ""
+                    visible: sessionObj && sessionObj.errorText !== "" && (page.gateServerError || page.gateAuth)
                     implicitHeight: gerr.implicitHeight + 18
                     radius: Theme.radius
                     color: Theme.dangerSoft
@@ -201,30 +430,77 @@ Item {
                         }
                     }
                 }
+
+                // Connecting / auto-retrying — spinner + live status, no password
+                // prompt. A saved password connects silently; transient failures
+                // retry with backoff until they succeed or the user aborts.
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: page.gateConnecting
+                    spacing: 10
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 11
+                        Spinner { size: 18 }
+                        Text {
+                            Layout.fillWidth: true
+                            text: sessionObj ? sessionObj.statusText : qsTr("Connecting…")
+                            color: Theme.text; font.pixelSize: Theme.fontMd
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    // Why the previous try failed, while we keep retrying.
+                    Text {
+                        Layout.fillWidth: true
+                        visible: sessionObj && sessionObj.retryAttempt > 1 && sessionObj.errorText !== ""
+                        text: sessionObj ? sessionObj.errorText : ""
+                        color: Theme.textFaint; font.pixelSize: Theme.fontXs; wrapMode: Text.WordWrap
+                    }
+                }
+
+                // Password prompt — first time, or after a wrong password. Typing
+                // a new one and connecting updates the saved keychain entry.
                 Field {
                     id: pass
                     Layout.fillWidth: true
+                    visible: page.gateAuth
                     label: qsTr("Password")
                     password: true
                     onAccepted: gate.submit()
-                    Component.onCompleted: focusInput()
+                    onVisibleChanged: if (visible) focusInput()
+                    Component.onCompleted: if (visible) focusInput()
                 }
                 Toggle {
                     id: remember
                     // Only saved connections can persist a password.
-                    visible: sessionObj && sessionObj.hostId !== ""
+                    visible: page.gateAuth && sessionObj && sessionObj.hostId !== ""
                     checked: true
                     label: qsTr("Remember in keychain")
                 }
+
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 10
                     GhostButton { text: qsTr("Cancel"); onClicked: page.closeRequested() }
+                    Item { Layout.fillWidth: true }
+                    // Abort an in-progress connect / retry loop.
+                    GhostButton {
+                        visible: page.gateConnecting
+                        text: qsTr("Abort")
+                        onClicked: if (sessionObj) sessionObj.abortConnect()
+                    }
+                    // Retry after a server/network error (reuses the password).
                     PrimaryButton {
-                        Layout.fillWidth: true
-                        text: page.st === SqlSession.Connecting ? qsTr("Connecting…") : qsTr("Connect")
+                        visible: page.gateServerError
+                        text: qsTr("Retry")
+                        iconName: "refresh"
+                        onClicked: if (sessionObj) sessionObj.reconnect()
+                    }
+                    // Connect with the entered password.
+                    PrimaryButton {
+                        visible: page.gateAuth
+                        text: qsTr("Connect")
                         iconName: "arrow-right"
-                        enabled: page.st !== SqlSession.Connecting
                         onClicked: gate.submit()
                     }
                 }
@@ -241,21 +517,44 @@ Item {
         // Toolbar: database switcher + status + resume/disconnect.
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 46
+            Layout.preferredHeight: 40
             color: Theme.surface
             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
+            // The sidebar's divider, continued up to the top of the query tabs
+            // (34 tall, on the baseline) so it forms the first tab's left edge.
+            Rectangle { x: 235; y: parent.height - 28; width: 1; height: 28; color: Theme.border }
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 12
                 anchors.rightMargin: 12
-                spacing: 10
+                spacing: 0
 
+                // Left column: exactly the sidebar's width (236 = 12 margin + 224),
+                // so the query tabs start right on the sidebar's divider line.
+                Item {
+                    Layout.preferredWidth: 224
+                    Layout.minimumWidth: 224
+                    Layout.maximumWidth: 224
+                    Layout.fillHeight: true
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.topMargin: 12      // centre on the query-tab label line
+                        anchors.rightMargin: 10
+                        spacing: 10
                 // Database context switcher with search (carries its own icon).
                 Item {
                     id: dbSwitch
-                    Layout.preferredWidth: 240
-                    implicitHeight: 32
+                    // Width follows the database name (icon + text + chevron + padding),
+                    // clamped so it neither collapses nor hogs the toolbar.
+                    Layout.fillWidth: true
+                    implicitHeight: 24
                     enabled: page.live
+
+                    TextMetrics {
+                        id: dbLabelMetrics
+                        font.pixelSize: Theme.fontMd
+                        text: sessionObj ? (sessionObj.currentDatabase || qsTr("(select database)")) : ""
+                    }
 
                     AbstractButton {
                         anchors.fill: parent
@@ -277,7 +576,7 @@ Item {
                                 color: Theme.text; font.pixelSize: Theme.fontMd
                                 verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
                             }
-                            Icon { Layout.rightMargin: 10; name: "chevron"; size: 11; color: Theme.textFaint; rotation: 90 }
+                            Icon { Layout.rightMargin: 10; name: "chevron"; size: 14; color: Theme.textDim; rotation: 90 }
                         }
                     }
 
@@ -374,28 +673,153 @@ Item {
                     }
                 }
                 Text {
+                    id: tablesCount
                     text: sessionObj ? qsTr("%1 tables").arg(sessionObj.tables.length) : ""
                     color: Theme.textFaint; font.pixelSize: Theme.fontXs
                 }
+                    }
+                }
 
-                Item { Layout.fillWidth: true }
+                // Query tabs — independent editors on this connection. The bar
+                // starts exactly on the sidebar's divider (continued up through
+                // the header) and the tabs sit on the header's baseline: inactive
+                // tabs are recessed, the active one opens into the editor below.
+                Flickable {
+                    id: qTabsFlick
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    contentWidth: qTabRow.width
+                    clip: true
+                    flickableDirection: Flickable.HorizontalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+                    Row {
+                        id: qTabRow
+                        anchors.bottom: parent.bottom
+                        height: 28
+                        spacing: 0
+                        Repeater {
+                            model: page.queryTabs.length
+                            delegate: AbstractButton {
+                                id: qtab
+                                required property int index
+                                readonly property bool current: page.activeQuery === index
+                                height: qTabRow.height
+                                hoverEnabled: true
+                                focusPolicy: Qt.NoFocus
+                                onClicked: page.selectQueryTab(index)
+                                implicitWidth: Math.max(100, qlabel.implicitWidth + 10 + 6 + 20 + 4)  // label + gap + close
+                                background: Rectangle {
+                                    color: qtab.current ? Theme.surface
+                                         : (qtab.hovered ? Theme.hover : Theme.surface2)
+                                    Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                    // Top edge: accent cap on the active tab, hairline otherwise.
+                                    Rectangle {
+                                        anchors { left: parent.left; right: parent.right; top: parent.top }
+                                        height: qtab.current ? 2 : 1
+                                        color: qtab.current ? Theme.accent : Theme.border
+                                    }
+                                    // Right edge, on the layout grid.
+                                    Rectangle {
+                                        anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+                                        width: 1
+                                        color: Theme.border
+                                    }
+                                    // Baseline under inactive tabs; the active tab leaves
+                                    // it open so it reads as part of the editor.
+                                    Rectangle {
+                                        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                                        height: 1
+                                        color: Theme.border
+                                        visible: !qtab.current
+                                    }
+                                }
+                                // Label on the left; close pinned to the tab's right edge.
+                                contentItem: Item {
+                                    Text {
+                                        id: qlabel
+                                        anchors.left: parent.left; anchors.leftMargin: 10
+                                        anchors.right: qclose.left; anchors.rightMargin: 6
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.verticalCenterOffset: 1
+                                        text: qsTr("Query %1").arg(qtab.index + 1)
+                                        elide: Text.ElideRight
+                                        color: qtab.current ? Theme.text : Theme.textDim
+                                        font.pixelSize: Theme.fontSm
+                                        font.weight: qtab.current ? Font.DemiBold : Font.Normal
+                                    }
+                                    // Close (only when more than one tab).
+                                    AbstractButton {
+                                        id: qclose
+                                        anchors.right: parent.right; anchors.rightMargin: 4
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.verticalCenterOffset: 1
+                                        visible: page.queryTabs.length > 1
+                                        // Always present; quieter on inactive tabs until hovered.
+                                        opacity: (qtab.current || qtab.hovered) ? 1 : 0.45
+                                        Behavior on opacity { NumberAnimation { duration: Theme.fast } }
+                                        width: 20; height: 20
+                                        onClicked: page.closeQueryTab(qtab.index)
+                                        ToolTip.visible: closeHov.hovered; ToolTip.delay: 600
+                                        ToolTip.text: qsTr("Close query")
+                                        // Round chip on hover, like browser tabs.
+                                        background: Rectangle {
+                                            radius: width / 2
+                                            color: closeHov.hovered ? Theme.surface3 : "transparent"
+                                            Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                        }
+                                        contentItem: Item {
+                                            Icon { anchors.centerIn: parent; name: "tab-close"; size: 14
+                                                color: closeHov.hovered ? Theme.text : Theme.textDim }
+                                        }
+                                        HoverHandler { id: closeHov }
+                                    }
+                                }
+                            }
+                        }
+                        // New query tab — right after the last tab.
+                        AbstractButton {
+                            id: qAdd
+                            height: qTabRow.height
+                            width: 30
+                            hoverEnabled: true
+                            focusPolicy: Qt.NoFocus
+                            onClicked: page.newQueryTab()
+                            ToolTip.visible: hovered; ToolTip.delay: 400; ToolTip.text: qsTr("New query")
+                            background: Item {
+                                Rectangle {
+                                    anchors.centerIn: parent
+                                    anchors.verticalCenterOffset: 1
+                                    width: 22; height: 22; radius: 4
+                                    color: qAdd.hovered ? Theme.hover : "transparent"
+                                }
+                            }
+                            contentItem: Item {
+                                Icon {
+                                    anchors.centerIn: parent
+                                    anchors.verticalCenterOffset: 1
+                                    name: "plus"; size: 14
+                                    color: qAdd.hovered ? Theme.text : Theme.textDim
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // Paused indicator.
                 RowLayout {
+                    Layout.leftMargin: 10
+                    Layout.topMargin: 12
                     spacing: 6
                     visible: page.paused
                     Rectangle { width: 7; height: 7; radius: 4; color: Theme.textFaint }
                     Text { text: qsTr("Paused"); color: Theme.textDim; font.pixelSize: Theme.fontSm }
                 }
                 GhostButton {
+                    Layout.leftMargin: 10
+                    Layout.topMargin: 12
                     visible: page.paused
                     text: qsTr("Resume")
                     onClicked: sessionObj.reconnect()
-                }
-                GhostButton {
-                    visible: page.live
-                    text: qsTr("Disconnect")
-                    onClicked: sessionObj.disconnectSession()
                 }
             }
         }
@@ -775,6 +1199,7 @@ Item {
                 Layout.fillHeight: true
                 spacing: 0
 
+
                 // Editor.
                 Rectangle {
                     Layout.fillWidth: true
@@ -794,7 +1219,125 @@ Item {
                             selectByMouse: true
                             wrapMode: TextArea.NoWrap
                             placeholderText: qsTr("Write SQL — ⌘↵ to run")
-                            background: null
+                            leftPadding: 20   // gutter for the per-statement result squares
+
+                            // Faint band behind the query whose result is currently open —
+                            // follows the selected result tab, gliding between lines.
+                            background: Item {
+                                Rectangle {
+                                    id: activeBand
+                                    readonly property int ri: Math.min(resultsArea.activeResult, page.ranRanges.length - 1)
+                                    readonly property bool shown: page.editorStmtCount > 1 && ri >= 0
+                                                                  && page.lastRunTab === page.activeQuery
+                                    readonly property var rng: shown ? page.ranRanges[ri] : null
+                                    readonly property color c: page.resultColor(ri >= 0 ? ri : 0)
+                                    // Effective end: trim trailing whitespace so the band stops at
+                                    // the last real character of the statement, not the next line.
+                                    readonly property int endEff: {
+                                        if (!rng) return 0
+                                        let e = rng.end; const t = editor.text
+                                        while (e > rng.start && /\s/.test(t.charAt(e - 1))) e--
+                                        return e
+                                    }
+                                    readonly property rect r0: rng ? editor.positionToRectangle(rng.start) : Qt.rect(0, 0, 0, 0)
+                                    readonly property rect rEnd: rng ? editor.positionToRectangle(endEff) : Qt.rect(0, 0, 0, 0)
+                                    readonly property bool singleLine: Math.abs(rEnd.y - r0.y) < 1
+                                    visible: shown
+                                    x: 0
+                                    // Hug the query text on a single line; fall back to full width
+                                    // for a multi-line statement (where a tight box would look odd).
+                                    width: singleLine ? Math.min(editor.width, rEnd.x + 8) : editor.width
+                                    y: r0.y
+                                    height: Math.max(r0.height, (rEnd.y + rEnd.height) - r0.y)
+                                    radius: 3
+                                    color: Qt.rgba(c.r, c.g, c.b, 0.10)
+                                    Rectangle { anchors.left: parent.left; width: 2; height: parent.height; color: activeBand.c }
+                                    Behavior on y { NumberAnimation { duration: Theme.normal; easing.type: Theme.easing } }
+                                    Behavior on width { NumberAnimation { duration: Theme.normal; easing.type: Theme.easing } }
+                                    Behavior on height { NumberAnimation { duration: Theme.normal; easing.type: Theme.easing } }
+                                }
+                            }
+
+                            // Colour square beside each statement of the last run — shown
+                            // whenever the editor holds more than one statement, so which
+                            // query ran (and which result tab it maps to) is always clear.
+                            Repeater {
+                                model: (page.editorStmtCount > 1 && page.lastRunTab === page.activeQuery) ? page.ranRanges : []
+                                delegate: Rectangle {
+                                    id: sq
+                                    required property int index
+                                    required property var modelData
+                                    readonly property rect r: editor.positionToRectangle(modelData.start)
+                                    width: 9; height: 9; radius: 2.5
+                                    x: 5
+                                    y: r.y + (r.height - height) / 2
+                                    color: page.resultColor(index)
+                                    opacity: 0.9
+                                    Behavior on opacity { NumberAnimation { duration: Theme.fast } }
+                                    NumberAnimation on scale { from: 0; to: 1; duration: Theme.normal; easing.type: Theme.easingEmph }
+                                }
+                            }
+
+                            // ---- autocompletion state ----
+                            property var acItems: []
+                            property int acIndex: 0
+                            property int acStart: -1      // where the replaced word begins
+                            property bool acSuppress: false
+
+                            function acHide() { if (acPopup.visible) acPopup.close() }
+                            function acUpdate() {
+                                if (acSuppress) { acSuppress = false; return }
+                                if (!activeFocus || selectedText.length > 0) { acHide(); return }
+                                const pos = cursorPosition
+                                const t = text
+                                let i = pos
+                                while (i > 0 && /[A-Za-z0-9_.]/.test(t.charAt(i - 1))) i--
+                                const token = t.substring(i, pos)
+                                if (token.length === 0 || /^\d+$/.test(token)) { acHide(); return }
+                                const dot = token.lastIndexOf(".")
+                                const qualifier = dot >= 0 ? token.substring(0, dot) : ""
+                                const partial = dot >= 0 ? token.substring(dot + 1) : token
+                                if (qualifier === "" && partial.length < 1) { acHide(); return }
+                                const cands = page.acCandidates(qualifier, partial, t, i)
+                                if (cands.length === 0) { acHide(); return }
+                                acStart = i + (dot >= 0 ? dot + 1 : 0)
+                                acItems = cands
+                                acIndex = 0
+                                const r = cursorRectangle
+                                acPopup.x = Math.max(0, Math.min(r.x, editor.width - acPopup.width - 4))
+                                acPopup.y = r.y + r.height + 2
+                                if (!acPopup.visible) acPopup.open()
+                            }
+                            function acAccept() {
+                                if (!acPopup.visible || acItems.length === 0) return
+                                const item = acItems[acIndex]
+                                const pos = cursorPosition
+                                acSuppress = true
+                                remove(acStart, pos)
+                                insert(acStart, item.text)
+                                acHide()
+                            }
+
+                            onTextChanged: Qt.callLater(editor.acUpdate)
+                            onActiveFocusChanged: if (!activeFocus) acHide()
+                            Keys.onPressed: (event) => {
+                                if (!acPopup.visible) return
+                                const plain = !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))
+                                if (event.key === Qt.Key_Down) {
+                                    editor.acIndex = Math.min(editor.acIndex + 1, editor.acItems.length - 1); event.accepted = true
+                                } else if (event.key === Qt.Key_Up) {
+                                    editor.acIndex = Math.max(editor.acIndex - 1, 0); event.accepted = true
+                                } else if (plain && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Tab)) {
+                                    editor.acAccept(); event.accepted = true
+                                } else if (event.key === Qt.Key_Escape) {
+                                    editor.acHide(); event.accepted = true
+                                } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right
+                                           || event.key === Qt.Key_Home || event.key === Qt.Key_End
+                                           || event.key === Qt.Key_PageUp || event.key === Qt.Key_PageDown) {
+                                    editor.acHide()   // let the caret move; don't keep a stale list
+                                }
+                            }
+
                             SqlHighlighter {
                                 document: editor.textDocument
                                 keywordColor: Theme.sqlKeyword
@@ -804,6 +1347,57 @@ Item {
                                 commentColor: Theme.sqlComment
                                 identifierColor: Theme.sqlIdentifier
                                 operatorColor: Theme.sqlOperator
+                            }
+
+                            // Completion popup, anchored under the caret.
+                            Popup {
+                                id: acPopup
+                                parent: editor
+                                width: 320
+                                padding: 4
+                                implicitHeight: Math.min(acList.contentHeight + padding * 2, 236)
+                                closePolicy: Popup.CloseOnPressOutside
+                                background: Rectangle {
+                                    radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong
+                                }
+                                ListView {
+                                    id: acList
+                                    anchors.fill: parent
+                                    clip: true
+                                    model: editor.acItems
+                                    currentIndex: editor.acIndex
+                                    boundsBehavior: Flickable.StopAtBounds
+                                    ScrollBar.vertical: ScrollBar {}
+                                    delegate: ItemDelegate {
+                                        id: acDel
+                                        required property int index
+                                        required property var modelData
+                                        width: acList.width; height: 28
+                                        onClicked: { editor.acIndex = index; editor.acAccept() }
+                                        background: Rectangle {
+                                            radius: Theme.radiusSm
+                                            color: acDel.index === editor.acIndex ? Theme.accentSoft : "transparent"
+                                        }
+                                        contentItem: RowLayout {
+                                            spacing: 8
+                                            Rectangle {
+                                                Layout.leftMargin: 4; Layout.alignment: Qt.AlignVCenter
+                                                width: 6; height: 6; radius: 3; color: page.acColor(acDel.modelData.kind)
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: acDel.modelData.text
+                                                color: Theme.text; font.family: Theme.monoFamily; font.pixelSize: Theme.fontSm
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                Layout.rightMargin: 6
+                                                text: acDel.modelData.kind
+                                                color: Theme.textFaint; font.pixelSize: Theme.fontXs
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -909,7 +1503,7 @@ Item {
                                        anchors.verticalCenter: parent.verticalCenter }
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    text: qsTr("Saved")
+                                    text: qsTr("Saved queries")
                                     color: Theme.text; font.pixelSize: Theme.fontSm; font.weight: Font.Medium
                                 }
                                 Rectangle {
@@ -1182,55 +1776,165 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
 
-                    readonly property var res: sessionObj ? sessionObj.result : null
-                    readonly property var models: sessionObj ? sessionObj.resultModels : []
+                    // The active tab shows live session results when its query is
+                    // the one that last ran; otherwise it shows its own snapshot.
+                    readonly property bool liveShown: page.lastRunTab === page.activeQuery
+                    readonly property var snap: (page.queryResults && page.activeQuery >= 0
+                                                 && page.activeQuery < page.queryResults.length)
+                                                ? page.queryResults[page.activeQuery] : null
+                    readonly property var models: liveShown ? (sessionObj ? sessionObj.resultModels : [])
+                                                            : (snap ? snap.models : [])
+                    readonly property var res: liveShown ? (sessionObj ? sessionObj.result : null)
+                                                         : (snap && snap.models.length ? snap.models[0] : null)
                     readonly property int count: models.length
                     readonly property bool hasGrid: count > 0
+                    readonly property string viewError: liveShown ? (sessionObj ? sessionObj.errorText : "")
+                                                                  : (snap ? (snap.error || "") : "")
+                    readonly property string viewMessage: liveShown ? (sessionObj ? sessionObj.message : "")
+                                                                    : (snap ? (snap.message || "") : "")
                     // Server-side record search only for a lone single-table read.
                     readonly property string serverTable: sessionObj ? sessionObj.statsTable : ""
                     property var activeGrid: null       // grid the keyboard copy acts on
 
+                    // Which result set (tab) is shown for a multi-statement batch.
+                    property int activeResult: 0
+
                     function exec(sql) { editor.text = sql; if (sessionObj) sessionObj.execute(sql) }
+                    // Put SQL in the editor without running it (batch DELETE, etc.).
+                    function stage(sql) { editor.text = sql; editor.forceActiveFocus() }
 
-                    // Single result set — one full-height grid with its own bar.
-                    ResultGrid {
-                        id: soloGrid
-                        anchors.fill: parent
-                        visible: resultsArea.count === 1
-                        model: resultsArea.res
-                        ordinal: 0
-                        stacked: false
-                        serverTable: resultsArea.serverTable
-                        onToast: (m, k) => page.toast(m, k)
-                        onServerSearch: (sql) => resultsArea.exec(sql)
-                        onActivated: resultsArea.activeGrid = soloGrid
+                    // A fresh batch resets the selected tab.
+                    Connections {
+                        target: sessionObj
+                        enabled: sessionObj
+                        function onResultsChanged() { resultsArea.activeResult = 0 }
                     }
+                    // Switching query tabs resets to that tab's first result set.
+                    Connections {
+                        target: page
+                        function onActiveQueryChanged() { resultsArea.activeResult = 0 }
+                    }
+                    // Micro fade when switching between result tabs.
+                    NumberAnimation {
+                        id: gridFade
+                        target: theGrid; property: "opacity"
+                        from: 0.45; to: 1; duration: Theme.normal; easing.type: Theme.easing
+                    }
+                    onActiveResultChanged: if (resultsArea.count > 1) gridFade.restart()
 
-                    // Multiple result sets — stacked, each with its own bar.
-                    ListView {
+                    ColumnLayout {
                         anchors.fill: parent
-                        visible: resultsArea.count > 1
-                        clip: true
-                        model: resultsArea.count > 1 ? resultsArea.models : []
+                        visible: resultsArea.hasGrid
                         spacing: 0
-                        boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.vertical: ScrollBar {}
-                        delegate: ResultGrid {
-                            id: stackGrid
-                            required property int index
-                            required property var modelData
-                            width: ListView.view.width
-                            height: {
-                                const rows = modelData && modelData.rows !== undefined ? modelData.rows : 0
-                                const bodyRows = Math.min(Math.max(rows, 1), 12)
-                                return 28 + 44 + 30 + bodyRows * 28 + 1  // header + bar + col-head + rows
+
+                        // Result tabs — one per set, each with its colour square;
+                        // shown only when a batch produced more than one result.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 34
+                            visible: resultsArea.count > 1
+                            color: Theme.surface
+                            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
+                            Flickable {
+                                id: tabsFlick
+                                anchors.fill: parent
+                                anchors.leftMargin: 6; anchors.rightMargin: 6
+                                contentWidth: tabRow.implicitWidth
+                                contentHeight: height
+                                clip: true
+                                flickableDirection: Flickable.HorizontalFlick
+                                boundsBehavior: Flickable.StopAtBounds
+                                ScrollBar.horizontal: ScrollBar { policy: ScrollBar.AsNeeded; height: 3 }
+                                // Keep the selected tab in view when it changes.
+                                function ensureVisible(x, w) {
+                                    if (x < contentX) contentX = Math.max(0, x - 8)
+                                    else if (x + w > contentX + width) contentX = Math.min(contentWidth - width, x + w - width + 8)
+                                }
+                                Row {
+                                    id: tabRow
+                                    height: tabsFlick.height
+                                    Repeater {
+                                        model: resultsArea.count > 1 ? resultsArea.count : 0
+                                        delegate: Row {
+                                            id: tabCell
+                                            required property int index
+                                            height: tabRow.height
+                                            AbstractButton {
+                                                id: tab
+                                                height: tabRow.height
+                                                hoverEnabled: true
+                                                focusPolicy: Qt.NoFocus
+                                                readonly property bool current: resultsArea.activeResult === tabCell.index
+                                                readonly property var m: resultsArea.models[tabCell.index]
+                                                onClicked: {
+                                                    resultsArea.activeResult = tabCell.index
+                                                    resultsArea.activeGrid = theGrid
+                                                    tabsFlick.ensureVisible(tabCell.x, tabCell.width)
+                                                }
+                                                contentItem: RowLayout {
+                                                    spacing: 7
+                                                    Rectangle {
+                                                        Layout.leftMargin: 11; Layout.alignment: Qt.AlignVCenter
+                                                        width: 10; height: 10; radius: 3
+                                                        color: page.resultColor(tabCell.index)
+                                                        opacity: tab.current ? 1 : 0.65
+                                                        Behavior on opacity { NumberAnimation { duration: Theme.fast } }
+                                                    }
+                                                    Text {
+                                                        text: qsTr("Result %1").arg(tabCell.index + 1)
+                                                        color: tab.current ? Theme.text : Theme.textDim
+                                                        font.pixelSize: Theme.fontSm
+                                                        font.weight: tab.current ? Font.DemiBold : Font.Normal
+                                                    }
+                                                    Text {
+                                                        Layout.rightMargin: 13
+                                                        visible: tab.m && tab.m.rows !== undefined
+                                                        text: tab.m ? tab.m.rows : ""
+                                                        color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily
+                                                    }
+                                                }
+                                                background: Rectangle {
+                                                    color: tab.current ? Theme.surface2 : (tab.hovered ? Theme.hover : "transparent")
+                                                    Behavior on color { ColorAnimation { duration: Theme.fast } }
+                                                    Rectangle {
+                                                        anchors { bottom: parent.bottom; left: parent.left; right: parent.right }
+                                                        height: 2
+                                                        color: page.resultColor(tabCell.index)
+                                                        opacity: tab.current ? 1 : 0
+                                                        Behavior on opacity { NumberAnimation { duration: Theme.normal } }
+                                                    }
+                                                }
+                                            }
+                                            // Divider between tabs.
+                                            Rectangle {
+                                                width: 1; height: Math.round(tabRow.height * 0.46)
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                color: Theme.border
+                                                visible: tabCell.index < resultsArea.count - 1
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            model: modelData
-                            ordinal: index
-                            stacked: true
-                            serverTable: ""   // per-set in-memory filter
+                        }
+
+                        // The visible grid: the selected tab's set, or the lone result.
+                        ResultGrid {
+                            id: theGrid
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            model: resultsArea.count > 1
+                                   ? resultsArea.models[Math.min(resultsArea.activeResult, resultsArea.count - 1)]
+                                   : resultsArea.res
+                            ordinal: resultsArea.count > 1 ? resultsArea.activeResult : 0
+                            stacked: false
+                            // Server-side search only applies to a lone single-table read.
+                            serverTable: (resultsArea.liveShown && resultsArea.count === 1) ? resultsArea.serverTable : ""
                             onToast: (m, k) => page.toast(m, k)
-                            onActivated: resultsArea.activeGrid = stackGrid
+                            onServerSearch: (sql) => resultsArea.exec(sql)
+                            onStageSql: (sql) => resultsArea.stage(sql)
+                            onActivated: resultsArea.activeGrid = theGrid
+                            Component.onCompleted: resultsArea.activeGrid = theGrid
                         }
                     }
 
@@ -1241,17 +1945,17 @@ Item {
                         visible: !resultsArea.hasGrid
                         Icon {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            name: sessionObj && sessionObj.errorText ? "alert" : "database"
+                            name: resultsArea.viewError ? "alert" : "database"
                             size: 26
-                            color: sessionObj && sessionObj.errorText ? Theme.danger : Theme.textFaint
+                            color: resultsArea.viewError ? Theme.danger : Theme.textFaint
                         }
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
                             width: 420; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
-                            text: sessionObj && sessionObj.errorText ? sessionObj.errorText
-                                : sessionObj && sessionObj.message ? sessionObj.message
+                            text: resultsArea.viewError ? resultsArea.viewError
+                                : resultsArea.viewMessage ? resultsArea.viewMessage
                                 : qsTr("Run a query to see results.")
-                            color: sessionObj && sessionObj.errorText ? Theme.danger : Theme.textDim
+                            color: resultsArea.viewError ? Theme.danger : Theme.textDim
                             font.pixelSize: Theme.fontMd
                         }
                     }
@@ -1272,7 +1976,7 @@ Item {
                         // Table stats (total rows / size) stream in from the
                         // background once the query targets a single table.
                         Text {
-                            visible: sessionObj && sessionObj.statsTable !== ""
+                            visible: resultsArea.liveShown && sessionObj && sessionObj.statsTable !== ""
                                      && sessionObj.tableRowCount >= 0
                             text: {
                                 if (!sessionObj || sessionObj.tableRowCount < 0) return ""
@@ -1284,13 +1988,16 @@ Item {
                             color: Theme.textDim; font.pixelSize: Theme.fontXs
                         }
                         Rectangle {
-                            visible: sessionObj && sessionObj.statsTable !== "" && sessionObj.tableRowCount >= 0
+                            visible: resultsArea.liveShown && sessionObj && sessionObj.statsTable !== "" && sessionObj.tableRowCount >= 0
                             width: 1; height: 12; color: Theme.border
                         }
                         Item { Layout.fillWidth: true }
                         Text {
-                            visible: sessionObj && sessionObj.result.columns.length > 0
-                            text: sessionObj ? sessionObj.result.rows + qsTr(" shown · ") + sessionObj.elapsedMs + " ms" : ""
+                            visible: resultsArea.res && resultsArea.res.columns.length > 0
+                            text: resultsArea.res
+                                  ? resultsArea.res.rows + qsTr(" shown")
+                                    + (resultsArea.liveShown && sessionObj ? qsTr(" · ") + sessionObj.elapsedMs + " ms" : "")
+                                  : ""
                             color: Theme.textFaint; font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily
                         }
                     }

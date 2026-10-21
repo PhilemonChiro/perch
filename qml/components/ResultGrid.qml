@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import Relay
 
 // One result set: an optional section header, its own compact search/filter bar,
@@ -18,7 +19,30 @@ Item {
 
     signal toast(string message, string kind)
     signal serverSearch(string sql)     // host executes this SQL
+    signal stageSql(string sql)         // host puts this SQL in the editor, unrun
     signal activated()                  // a cell here was selected
+
+    // Row ticking for batch operations. Selection is by view-row index; it is
+    // cleared whenever the view changes (reset / sort / filter) so indices stay
+    // valid. `checkRev` bumps on every change so delegate bindings re-evaluate.
+    property var checkMap: ({})
+    property int checkCount: 0
+    property int checkRev: 0
+    function isChecked(r) { return checkMap[r] === true }
+    function toggleRow(r) {
+        const m = checkMap
+        if (m[r]) delete m[r]; else m[r] = true
+        checkMap = m; checkCount = Object.keys(m).length; checkRev++
+    }
+    function setAllChecked(on) {
+        const m = {}
+        if (on && model) for (let r = 0; r < model.rows; r++) m[r] = true
+        checkMap = m; checkCount = Object.keys(m).length; checkRev++
+    }
+    function clearChecks() { checkMap = ({}); checkCount = 0; checkRev++ }
+    function checkedIndices() {
+        return Object.keys(checkMap).map(k => parseInt(k)).sort((a, b) => a - b)
+    }
 
     readonly property bool hasGrid: model && model.columns.length > 0
     readonly property bool serverMode: serverTable !== ""
@@ -84,17 +108,76 @@ Item {
         rg.toast(qsTr("Copied as INSERT"), "info")
     }
 
+    // SQL literal for one cell: NULL, bare number, or single-quoted string.
+    function sqlLiteral(v) {
+        if (v === "NULL") return "NULL"
+        if (/^-?\d+(\.\d+)?$/.test(v)) return v
+        return "'" + v.replace(/'/g, "''") + "'"
+    }
+    readonly property string batchTable: serverTable !== "" ? serverTable : "table"
+
+    // ----- batch operations over the ticked rows -----
+    function copyCheckedTsv() {
+        if (!model) return
+        const idx = checkedIndices(), out = [model.columns.join("\t")]
+        for (const r of idx) out.push(model.rowText(r))
+        Clipboard.copy(out.join("\n"))
+        rg.toast(qsTr("Copied %1 rows").arg(idx.length), "info")
+    }
+    function copyCheckedJson() {
+        if (!model) return
+        const cols = model.columns, idx = checkedIndices(), arr = []
+        for (const r of idx) {
+            const o = {}
+            for (let c = 0; c < cols.length; c++) o[cols[c]] = model.cellText(r, c)
+            arr.push(o)
+        }
+        Clipboard.copy(JSON.stringify(arr, null, 2))
+        rg.toast(qsTr("Copied %1 rows as JSON").arg(idx.length), "info")
+    }
+    function copyCheckedInsert() {
+        if (!model) return
+        const cols = model.columns, idx = checkedIndices(), lines = []
+        for (const r of idx) {
+            const vals = []
+            for (let c = 0; c < cols.length; c++) vals.push(rg.sqlLiteral(model.cellText(r, c)))
+            lines.push("INSERT INTO " + batchTable + " (" + cols.join(", ") + ") VALUES (" + vals.join(", ") + ");")
+        }
+        Clipboard.copy(lines.join("\n"))
+        rg.toast(qsTr("Copied %1 INSERT statements").arg(idx.length), "info")
+    }
+    // Build a reviewable DELETE for the ticked rows and hand it to the editor —
+    // never executed. Keys on the first column (usually the id/PK).
+    function generateCheckedDelete() {
+        if (!model || model.columns.length === 0) return
+        const idx = checkedIndices()
+        if (!idx.length) return
+        const keyCol = model.columns[0]
+        const keys = idx.map(r => rg.sqlLiteral(model.cellText(r, 0)))
+        const sql = "DELETE FROM " + batchTable + "\nWHERE " + keyCol + " IN (\n    "
+                  + keys.join("\n  , ") + "\n);"
+        rg.stageSql(sql)
+        rg.toast(serverTable !== ""
+                 ? qsTr("DELETE staged in the editor — review before running")
+                 : qsTr("DELETE staged — set the table name, then review before running"), "info")
+    }
+    function exportCheckedCsv() {
+        if (!model) return
+        csvDialog.open()
+    }
+
     Connections {
         target: rg.model
         function onResetted() {
             rg.selRow = -1; rg.selCol = -1
+            rg.clearChecks()
             const cols = rg.model ? rg.model.columns : []
             if (cols.indexOf(rg.searchCol) === -1)
                 rg.searchCol = cols.length ? cols[0] : ""
             table.forceLayout()
         }
-        function onSortChanged() { table.forceLayout() }
-        function onFilterChanged() { table.forceLayout() }
+        function onSortChanged() { rg.clearChecks(); table.forceLayout() }
+        function onFilterChanged() { rg.clearChecks(); table.forceLayout() }
     }
 
     Menu {
@@ -116,6 +199,20 @@ Item {
         Action { text: qsTr("Copy as INSERT"); onTriggered: rg.copyInsert() }
         MenuSeparator { contentItem: Rectangle { implicitHeight: 1; color: Theme.border } }
         Action { text: qsTr("Copy column"); onTriggered: rg.copyColumn() }
+    }
+
+    FileDialog {
+        id: csvDialog
+        title: qsTr("Export selected rows to CSV")
+        fileMode: FileDialog.SaveFile
+        nameFilters: [qsTr("CSV files (*.csv)"), qsTr("All files (*)")]
+        defaultSuffix: "csv"
+        onAccepted: {
+            const n = rg.checkCount
+            const ok = rg.model && rg.model.exportRowsCsv(selectedFile, rg.checkedIndices())
+            rg.toast(ok ? qsTr("Exported %1 rows to CSV").arg(n) : qsTr("Could not write the CSV file"),
+                     ok ? "info" : "error")
+        }
     }
 
     ColumnLayout {
@@ -355,6 +452,39 @@ Item {
             }
         }
 
+        // Batch bar — appears when rows are ticked; acts on the selection.
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 40
+            visible: rg.hasGrid && rg.checkCount > 0
+            color: Theme.accentFaint
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
+            RowLayout {
+                anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+                Rectangle { width: 7; height: 7; radius: 3.5; color: Theme.accent }
+                Text {
+                    text: qsTr("%1 selected").arg(rg.checkCount)
+                    color: Theme.text; font.pixelSize: Theme.fontSm; font.weight: Font.DemiBold
+                }
+                Rectangle { width: 1; height: 16; color: Theme.border; Layout.leftMargin: 4; Layout.rightMargin: 4 }
+                GhostButton { text: qsTr("Copy"); implicitHeight: 28; onClicked: rg.copyCheckedTsv() }
+                GhostButton { text: qsTr("JSON"); implicitHeight: 28; onClicked: rg.copyCheckedJson() }
+                GhostButton { text: qsTr("INSERTs"); implicitHeight: 28; onClicked: rg.copyCheckedInsert() }
+                GhostButton { text: qsTr("DELETE…"); implicitHeight: 28; onClicked: rg.generateCheckedDelete() }
+                GhostButton { text: qsTr("Export CSV"); implicitHeight: 28; onClicked: rg.exportCheckedCsv() }
+                Item { Layout.fillWidth: true }
+                AbstractButton {
+                    id: clearSel
+                    implicitHeight: 28; implicitWidth: 28
+                    hoverEnabled: true
+                    onClicked: rg.clearChecks()
+                    ToolTip.visible: hovered; ToolTip.delay: 400; ToolTip.text: qsTr("Clear selection")
+                    background: Rectangle { radius: Theme.radiusSm; color: clearSel.hovered ? Theme.hover : "transparent" }
+                    contentItem: Icon { name: "x"; size: 12; color: Theme.textDim }
+                }
+            }
+        }
+
         // Grid.
         Item {
             Layout.fillWidth: true
@@ -367,10 +497,32 @@ Item {
                 visible: rg.hasGrid
 
                 Rectangle {
+                    id: corner
                     Layout.preferredWidth: vhv.width
                     Layout.preferredHeight: 30
-                    color: Theme.surface2
+                    color: cornerHover.hovered ? Theme.surface3 : Theme.surface2
                     border.color: Theme.border
+                    Behavior on color { ColorAnimation { duration: Theme.fast } }
+                    readonly property bool allChecked: rg.model && rg.checkCount > 0 && rg.checkCount === rg.model.rows
+                    readonly property bool some: rg.checkCount > 0 && !allChecked
+                    HoverHandler { id: cornerHover }
+                    TapHandler { onTapped: rg.setAllChecked(!corner.allChecked) }
+                    ToolTip.visible: cornerHover.hovered; ToolTip.delay: 500
+                    ToolTip.text: corner.allChecked ? qsTr("Clear all") : qsTr("Select all rows")
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 15; height: 15; radius: 4
+                        color: (corner.allChecked || corner.some) ? Theme.accent : "transparent"
+                        border.width: (corner.allChecked || corner.some) ? 0 : 1.5
+                        border.color: Theme.borderStrong
+                        Behavior on color { ColorAnimation { duration: Theme.fast } }
+                        Text {
+                            anchors.centerIn: parent
+                            text: corner.allChecked ? "✓" : "–"
+                            visible: corner.allChecked || corner.some
+                            color: Theme.accentInk; font.pixelSize: 11; font.weight: Font.Bold
+                        }
+                    }
                 }
                 HorizontalHeaderView {
                     id: hhv
@@ -408,21 +560,39 @@ Item {
                 VerticalHeaderView {
                     id: vhv
                     Layout.fillHeight: true
-                    Layout.preferredWidth: 52
+                    Layout.preferredWidth: 60
                     syncView: table
                     clip: true
                     delegate: Rectangle {
+                        id: vcell
                         required property int index
                         readonly property bool rowHover: rg.hoverRow === index
-                        implicitWidth: 52
-                        color: rowHover ? Theme.accentFaint : Theme.surface2
+                        readonly property bool checked: (rg.checkRev, rg.isChecked(index))
+                        implicitWidth: 60
+                        color: checked ? Theme.checkedRow : (rowHover ? Theme.accentFaint : Theme.surface2)
                         Behavior on color { ColorAnimation { duration: Theme.fast } }
                         Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.border }
+                        HoverHandler { onHoveredChanged: if (hovered) rg.hoverRow = vcell.index }
+                        TapHandler { onTapped: rg.toggleRow(vcell.index) }
+                        // Always-visible tick box (left) + row number (right).
+                        Rectangle {
+                            anchors.left: parent.left; anchors.leftMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 15; height: 15; radius: 4
+                            color: vcell.checked ? Theme.accent : "transparent"
+                            border.width: vcell.checked ? 0 : 1.5
+                            border.color: (vcell.rowHover || vcell.checked) ? Theme.borderStrong : Theme.border
+                            Behavior on color { ColorAnimation { duration: Theme.fast } }
+                            Text {
+                                anchors.centerIn: parent; text: "✓"; visible: vcell.checked
+                                color: Theme.accentInk; font.pixelSize: 11; font.weight: Font.Bold
+                            }
+                        }
                         Text {
-                            anchors.fill: parent; anchors.rightMargin: 8
-                            horizontalAlignment: Text.AlignRight; verticalAlignment: Text.AlignVCenter
-                            text: index + 1
-                            color: rowHover ? Theme.textDim : Theme.textFaint
+                            anchors.right: parent.right; anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: vcell.index + 1
+                            color: (vcell.rowHover || vcell.checked) ? Theme.textDim : Theme.textFaint
                             font.pixelSize: Theme.fontXs; font.family: Theme.monoFamily
                         }
                     }
@@ -450,14 +620,22 @@ Item {
                         required property bool isNull
                         readonly property bool selected: rg.selRow === row && rg.selCol === column
                         readonly property bool rowHover: rg.hoverRow === row
+                        readonly property bool rowChecked: (rg.checkRev, rg.isChecked(row))
                         readonly property bool numeric: !isNull && /^-?\d{1,3}(,\d{3})*(\.\d+)?$|^-?\d+(\.\d+)?$/.test(display)
                         implicitWidth: 160
                         implicitHeight: 28
                         color: selected ? Theme.accentSoft
+                             : rowChecked ? Theme.checkedRow
                              : rowHover ? Theme.accentFaint
                              : (row % 2 ? Theme.bg : Theme.surface)
                         Behavior on color { ColorAnimation { duration: Theme.fast } }
                         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border; opacity: 0.5 }
+                        // Left edge stripe marking a ticked row.
+                        Rectangle {
+                            visible: cell.column === 0 && cell.rowChecked
+                            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                            width: 2; color: Theme.checkedEdge
+                        }
                         Rectangle { visible: cell.selected; anchors.fill: parent; color: "transparent"; border.color: Theme.accent; border.width: 1 }
                         HoverHandler { onHoveredChanged: if (hovered) rg.hoverRow = cell.row }
                         TapHandler {

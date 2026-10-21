@@ -20,6 +20,7 @@ public:
     bool runBatch(const QString& sql, QVector<SqlResultSet>& sets, QString& err) override;
     void switchDatabase(const QString& name, QString& currentDb, QVariantList& objects) override;
     void refreshObjects(QVariantList& objects) override { if (m_conn) objects = objectList(); }
+    void columnMap(QVariantMap& columns) override { if (m_conn) columns = columnList(); }
     void stats(const QString& table, qint64& rowCount, qint64& sizeKb) override;
 
 private:
@@ -29,6 +30,7 @@ private:
     QStringList databaseList();
     QString currentDb();
     QVariantList objectList();
+    QVariantMap columnList();
     // Runs a single metadata query, returning its first column as a list.
     QStringList firstColumn(const QString& sql);
 

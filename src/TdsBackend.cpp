@@ -218,6 +218,35 @@ QVariantList TdsBackend::objectList()
     return out;
 }
 
+// Column names for every user table/view, grouped by "schema.name", for editor
+// autocompletion. One pass over sys.columns, ordered so each table's columns
+// come out in definition order.
+QVariantMap TdsBackend::columnList()
+{
+    QVariantMap out;
+    QStringList cols;
+    QVector<QStringList> rows;
+    int affected = -1;
+    QString err;
+    if (runQuery(QStringLiteral(
+                     "SELECT s.name + '.' + o.name, c.name "
+                     "FROM sys.columns c "
+                     "JOIN sys.objects o ON o.object_id = c.object_id "
+                     "JOIN sys.schemas s ON s.schema_id = o.schema_id "
+                     "WHERE o.type IN ('U','V') AND o.is_ms_shipped = 0 "
+                     "ORDER BY o.object_id, c.column_id"),
+                 cols, rows, affected, err)) {
+        for (const QStringList& r : rows) {
+            if (r.size() < 2 || r.first().isEmpty())
+                continue;
+            QVariantList cur = out.value(r.at(0)).toList();
+            cur.append(r.at(1));
+            out.insert(r.at(0), cur);
+        }
+    }
+    return out;
+}
+
 bool TdsBackend::runQuery(const QString& sql, QStringList& columns, QVector<QStringList>& rows,
                           int& affected, QString& err)
 {

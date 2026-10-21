@@ -49,6 +49,28 @@ void UpdateChecker::setChecking(bool c)
 
 void UpdateChecker::checkForUpdates()
 {
+    // Dev aid: RELAY_UPDATE_DEMO opens the update dialog with sample release
+    // notes (no network), to preview the "What's new" presentation.
+    if (qEnvironmentVariableIsSet("RELAY_UPDATE_DEMO")) {
+        m_latest = QStringLiteral("0.2.0");
+        m_name = QStringLiteral("Perch 0.2.0");
+        m_notes = QStringLiteral(
+            "## What's Changed\n"
+            "* Add collapsible object-browser folders with per-type icons\n"
+            "* Add SQL IntelliSense with table and column completion\n"
+            "* Add batch row operations: copy, INSERTs, generate DELETE, export CSV\n"
+            "* Add a single-instance guard so a second launch focuses the running window\n"
+            "* Improve metadata fetch to read the catalog directly\n"
+            "* Improve connecting with automatic retry and exponential backoff\n"
+            "* Fix the Windows installer to bundle the correct x64 MSVC runtime\n"
+            "* Fix a wrong-architecture DLL causing 0xc000007b at launch\n"
+            "**Full Changelog**: https://github.com/PhilemonChiro/perch/compare/v0.1.4...v0.2.0\n");
+        m_url = QStringLiteral("https://github.com/PhilemonChiro/perch/releases/tag/v0.2.0");
+        m_available = true;
+        emit updateChanged();
+        emit checkFinished(true);
+        return;
+    }
     if (m_checking || QString::fromLatin1(kRepo).isEmpty())
         return;
     m_error.clear();

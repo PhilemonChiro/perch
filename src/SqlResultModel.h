@@ -1,8 +1,11 @@
 #pragma once
 
 #include <QAbstractTableModel>
+#include <QFile>
 #include <QQmlEngine>
 #include <QStringList>
+#include <QTextStream>
+#include <QUrl>
 #include <QVariantList>
 #include <QVector>
 
@@ -130,6 +133,52 @@ public:
         return v.isNull() ? QStringLiteral("NULL") : v;
     }
 
+    // Writes the given view-row indices (or every row when `rows` is empty) to a
+    // CSV file at `path` (a plain path or a file:// URL). Returns false on any
+    // file error. A field is quoted when it holds a comma, quote or newline; a
+    // true SQL NULL is written as an empty field.
+    Q_INVOKABLE bool exportRowsCsv(const QString& path, const QVariantList& rows) const
+    {
+        QString p = path.startsWith(QStringLiteral("file:")) ? QUrl(path).toLocalFile() : path;
+        QFile f(p);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+            return false;
+        QTextStream out(&f);
+        out.setEncoding(QStringConverter::Utf8);
+        const auto field = [](const QString& v) -> QString {
+            if (v.isNull())
+                return {};
+            QString s = v;
+            if (s.contains(QLatin1Char(',')) || s.contains(QLatin1Char('"'))
+                || s.contains(QLatin1Char('\n')) || s.contains(QLatin1Char('\r'))) {
+                s.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+                return QLatin1Char('"') + s + QLatin1Char('"');
+            }
+            return s;
+        };
+        QStringList hdr;
+        for (const QString& c : m_columns)
+            hdr << field(c);
+        out << hdr.join(QLatin1Char(',')) << "\r\n";
+        const auto writeRow = [&](int r) {
+            if (r < 0 || r >= m_rows.size())
+                return;
+            QStringList line;
+            const QStringList& row = m_rows.at(r);
+            for (const QString& v : row)
+                line << field(v);
+            out << line.join(QLatin1Char(',')) << "\r\n";
+        };
+        if (rows.isEmpty())
+            for (int r = 0; r < m_rows.size(); ++r)
+                writeRow(r);
+        else
+            for (const QVariant& rv : rows)
+                writeRow(rv.toInt());
+        f.close();
+        return f.error() == QFileDevice::NoError;
+    }
+
     // Sorts by a column; clicking the same column again flips direction.
     Q_INVOKABLE void sortByColumn(int column)
     {
@@ -161,6 +210,19 @@ public:
         });
         endResetModel();
         emit sortChanged();
+    }
+
+    // A detached deep copy parented to `parent` (or JS-owned when null). Used to
+    // keep a query tab's results alive after a later query reuses the session's
+    // live models. Copies the full fetched set, unfiltered and unsorted.
+    SqlResultModel* clone(QObject* parent) const
+    {
+        auto* m = new SqlResultModel(parent);
+        m->m_columns = m_columns;
+        m->m_rows = m_allRows;
+        m->m_allRows = m_allRows;
+        m->m_columnWidths = m_columnWidths;
+        return m;
     }
 
     void reset(const QStringList& columns, QVector<QStringList> rows)

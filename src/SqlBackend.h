@@ -3,6 +3,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
+#include <QVariantMap>
 #include <QVector>
 
 // One result set produced by a batch: its columns, its rows, and for a
@@ -56,6 +57,11 @@ public:
     // Re-reads the object browser list for the current database without changing
     // it — the manual "refresh" after the schema changes. No-op if not open.
     virtual void refreshObjects(QVariantList& objects) = 0;
+
+    // Column names for every table/view in the current database, as a map
+    // {"schema.table": ["col1","col2",...]}, for editor autocompletion. One
+    // catalog query; leaves `columns` empty if not open.
+    virtual void columnMap(QVariantMap& columns) = 0;
 
     // Fast metadata stats (no table scan) for one "schema.table"; each is -1
     // when unavailable.

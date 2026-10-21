@@ -44,6 +44,10 @@ QtObject {
     readonly property color accentFaint: Qt.rgba(accent.r, accent.g, accent.b, dark ? 0.10 : 0.07)
     readonly property color accent2:     dark ? "#7FE3C6" : "#2FA98A"  // paired tone for the brand mark
     readonly property color accentInk:   "#FFFFFF"
+    // Distinct teal wash for ticked (batch-selected) rows in the results grid —
+    // deliberately different from the blue hover/cell-selection tints.
+    readonly property color checkedRow:  Qt.rgba(accent2.r, accent2.g, accent2.b, dark ? 0.22 : 0.16)
+    readonly property color checkedEdge: Qt.rgba(accent2.r, accent2.g, accent2.b, dark ? 0.55 : 0.45)
 
     // Semantic — green means connected; it is not used decoratively.
     readonly property color success:     dark ? "#46C78E" : "#1F9D6B"

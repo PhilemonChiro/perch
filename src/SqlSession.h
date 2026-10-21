@@ -6,6 +6,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QVariantList>
+#include <QVariantMap>
 #include <QVector>
 
 #include "SqlBackend.h"
@@ -47,6 +48,13 @@ class SqlSession : public QObject
     Q_PROPERTY(QString database READ database CONSTANT)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY errorChanged)
+    // True when the last failure was an authentication problem (wrong password /
+    // login denied), so the UI re-prompts for a password instead of auto-retrying.
+    Q_PROPERTY(bool errorIsAuth READ errorIsAuth NOTIFY errorChanged)
+    // Auto-retry (exponential backoff) progress, for the connecting UI.
+    Q_PROPERTY(int retryAttempt READ retryAttempt NOTIFY retryChanged)       // 0 = not retrying
+    Q_PROPERTY(int retryMax READ retryMax CONSTANT)
+    Q_PROPERTY(int retrySecondsLeft READ retrySecondsLeft NOTIFY retryChanged)
     Q_PROPERTY(QString message READ message NOTIFY messageChanged)
     Q_PROPERTY(int affectedRows READ affectedRows NOTIFY messageChanged)
     Q_PROPERTY(qint64 elapsedMs READ elapsedMs NOTIFY messageChanged)
@@ -55,6 +63,8 @@ class SqlSession : public QObject
     Q_PROPERTY(QStringList tables READ tables NOTIFY tablesChanged)
     // Full object browser: list of {name, type} maps (table/view/procedure/function).
     Q_PROPERTY(QVariantList objects READ objects NOTIFY tablesChanged)
+    // Column names per table for editor autocompletion: {"schema.table": [cols]}.
+    Q_PROPERTY(QVariantMap columns READ columns NOTIFY columnsChanged)
     // Background-fetched stats for the single table the last SELECT read from.
     Q_PROPERTY(QString statsTable READ statsTable NOTIFY statsChanged)
     Q_PROPERTY(qint64 tableRowCount READ tableRowCount NOTIFY statsChanged)
@@ -90,6 +100,10 @@ public:
     QString database() const { return m_database; }
     QString statusText() const { return m_statusText; }
     QString errorText() const { return m_errorText; }
+    bool errorIsAuth() const { return m_errorIsAuth; }
+    int retryAttempt() const { return m_retryCount; }
+    int retryMax() const { return kMaxRetries; }
+    int retrySecondsLeft() const { return m_retrySecondsLeft; }
     QString message() const { return m_message; }
     int affectedRows() const { return m_affected; }
     qint64 elapsedMs() const { return m_elapsed; }
@@ -97,6 +111,7 @@ public:
     QString currentDatabase() const { return m_currentDatabase; }
     QStringList tables() const { return m_tables; }
     QVariantList objects() const { return m_objects; }
+    QVariantMap columns() const { return m_columns; }
     QString statsTable() const { return m_statsTable; }
     qint64 tableRowCount() const { return m_tableRowCount; }
     qint64 tableSizeKb() const { return m_tableSizeKb; }
@@ -104,6 +119,10 @@ public:
     SqlResultModel* result() const { return m_result; }
     int resultCount() const { return int(m_sets.size()); }
     QVariantList resultModels() const;
+    // Detached, JS-owned copy of the current results, so a query tab can keep
+    // showing them after another tab's query reuses the live models. Returns a
+    // map: { models: [SqlResultModel*], message, error, statsTable }.
+    Q_INVOKABLE QVariantMap snapshotResults() const;
 
     // Connects using a password held in memory for the tab's lifetime. When
     // `remember` is set and this is a saved connection, the password is also
@@ -119,6 +138,11 @@ public:
     Q_INVOKABLE void useDatabase(const QString& name);
     // Re-reads the object browser for the current database (manual refresh).
     Q_INVOKABLE void refreshObjects();
+    // Fetches column metadata for autocompletion (cached in `columns`).
+    Q_INVOKABLE void requestColumns();
+    // Stops an in-progress connect, cancelling any pending auto-retry, and marks
+    // the session Failed so the UI shows the error with a manual Retry.
+    Q_INVOKABLE void abortConnect();
     // Drops the live connection but keeps the tab; reconnect()/execute() resume.
     Q_INVOKABLE void disconnectSession();
     // How long (ms) the connection may sit idle before it is paused. 0 disables.
@@ -128,10 +152,12 @@ signals:
     void stateChanged();
     void statusChanged();
     void errorChanged();
+    void retryChanged();
     void messageChanged();
     void databasesChanged();
     void currentDatabaseChanged();
     void tablesChanged();
+    void columnsChanged();
     void statsChanged();
     void resultsChanged();
     // Emitted after a successful connect when the user chose to remember the
@@ -144,17 +170,26 @@ signals:
     void doExecute(const QString& sql);
     void doUseDatabase(const QString& name);
     void doRefreshObjects();
+    void doColumns();
     void doStats(const QString& table);
 
 private:
     void setState(State s);
     void kickIdle();
+    // Fires the actual connect attempt (first try or a retry).
+    void attemptConnect();
+    // Schedules the next backoff retry; updates the countdown each second.
+    void scheduleRetry();
+    // Classifies a connect error as an authentication failure (vs. transient /
+    // network / server-unavailable, which is worth auto-retrying).
+    static bool isAuthError(const QString& error);
     void onConnected(const QStringList& databases, const QString& currentDb, const QVariantList& objects);
     void onFailed(const QString& error);
     void onResults(const QVector<SqlResultSet>& sets, qint64 elapsed, const QString& error);
     void rebuildModels();
     void onSwitched(const QString& currentDb, const QVariantList& objects);
     void onObjectsRefreshed(const QVariantList& objects);
+    void onColumnsReady(const QVariantMap& columns);
     void onStats(const QString& table, qint64 rowCount, qint64 sizeKb);
     // Returns the single source table of a plain SELECT, or "" if the query
     // joins, lists several tables, or isn't a simple table read.
@@ -173,6 +208,7 @@ private:
     QString m_batchSql;                        // the last batch's SQL (for stats)
     QStringList m_databases, m_tables;
     QVariantList m_objects;
+    QVariantMap m_columns;
     QString m_currentDatabase;
 
     QString m_statsTable, m_pendingStatsTable;
@@ -183,6 +219,16 @@ private:
     QString m_pendingSql;  // a query to run once a resume completes
     bool m_haveConnected = false;
     bool m_remember = false;
+
+    bool m_errorIsAuth = false;
+    // Auto-retry with exponential backoff for transient/network failures.
+    static constexpr int kMaxRetries = 5;
+    static constexpr int kBackoffBaseMs = 3000;   // first wait
+    static constexpr int kBackoffCapMs = 30000;   // longest wait
+    int m_retryCount = 0;          // attempts made so far in the current connect
+    int m_retrySecondsLeft = 0;    // countdown shown while waiting to retry
+    QTimer m_backoffTimer;         // single-shot: delay before the next attempt
+    QTimer m_countdownTimer;       // 1s tick to update m_retrySecondsLeft
 
     QTimer m_idleTimer;
     int m_idleTimeout = 10 * 60 * 1000; // 10 minutes

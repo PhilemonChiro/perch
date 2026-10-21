@@ -2,6 +2,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -19,7 +21,26 @@ int main(int argc, char* argv[])
     QGuiApplication app(argc, argv);
     app.setApplicationName("Relay");
     app.setOrganizationName("Relay");
-    app.setApplicationVersion(QStringLiteral("0.1.3"));
+    app.setApplicationVersion(QStringLiteral("0.1.5"));
+
+    // Single instance: if another Perch is already running, ask it to come to
+    // the front and exit instead of opening a second window. Keyed per user so
+    // separate accounts on one machine each get their own instance.
+    const QString kInstanceKey = QStringLiteral("perch.single-instance.")
+                                 + QString::number(qHash(QDir::homePath()));
+    {
+        QLocalSocket probe;
+        probe.connectToServer(kInstanceKey);
+        if (probe.waitForConnected(200)) {
+            probe.write("activate");
+            probe.flush();
+            probe.waitForBytesWritten(200);
+            return 0;
+        }
+    }
+    QLocalServer instanceServer;
+    QLocalServer::removeServer(kInstanceKey); // clear a stale socket from a crash
+    instanceServer.listen(kInstanceKey);
 
 #if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
     // NLA authenticates with NTLM, whose password hash is MD4 (and whose key
@@ -47,6 +68,17 @@ int main(int argc, char* argv[])
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     engine.loadFromModule("Relay", "Main");
+
+    // A second launch pings us here — raise and focus the existing window.
+    QObject::connect(&instanceServer, &QLocalServer::newConnection, &app, [&engine, &instanceServer] {
+        if (QLocalSocket* c = instanceServer.nextPendingConnection())
+            c->deleteLater();
+        if (auto* w = qobject_cast<QQuickWindow*>(engine.rootObjects().value(0))) {
+            w->show();
+            w->raise();
+            w->requestActivate();
+        }
+    });
 
     // Dev aid: RELAY_CONNECT=user@host:port (+ RELAY_PASSWORD, RELAY_TRUST=1|2) opens a session.
     if (const QString target = qEnvironmentVariable("RELAY_CONNECT"); !target.isEmpty()) {

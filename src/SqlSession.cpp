@@ -75,12 +75,21 @@ public slots:
         emit objectsRefreshed(objects);
     }
 
+    // Fetches the column metadata for editor autocompletion (one catalog query).
+    void columns()
+    {
+        QVariantMap cols;
+        m_backend->columnMap(cols);
+        emit columnsReady(cols);
+    }
+
     void shutdown() { m_backend->close(); }
 
 signals:
     void connected(const QStringList& databases, const QString& currentDb, const QVariantList& objects);
     void switched(const QString& currentDb, const QVariantList& objects);
     void objectsRefreshed(const QVariantList& objects);
+    void columnsReady(const QVariantMap& columns);
     void failed(const QString& error);
     void results(const QVector<SqlResultSet>& sets, qint64 elapsedMs, const QString& error);
     void statsReady(const QString& table, qint64 rowCount, qint64 sizeKb);
@@ -109,6 +118,17 @@ SqlSession::SqlSession(const QString& hostId, const QString& host, int port,
     qRegisterMetaType<QVector<QStringList>>("QVector<QStringList>");
     qRegisterMetaType<QVector<SqlResultSet>>("QVector<SqlResultSet>");
 
+    m_backoffTimer.setSingleShot(true);
+    connect(&m_backoffTimer, &QTimer::timeout, this, [this] { attemptConnect(); });
+    m_countdownTimer.setInterval(1000);
+    connect(&m_countdownTimer, &QTimer::timeout, this, [this] {
+        if (m_retrySecondsLeft > 0)
+            --m_retrySecondsLeft;
+        if (m_retrySecondsLeft <= 0)
+            m_countdownTimer.stop();
+        emit retryChanged();
+    });
+
     m_idleTimer.setSingleShot(true);
     connect(&m_idleTimer, &QTimer::timeout, this, [this] {
         if (m_state == Connected) {
@@ -126,10 +146,12 @@ SqlSession::SqlSession(const QString& hostId, const QString& host, int port,
     connect(this, &SqlSession::doExecute, m_worker, &SqlWorker::run);
     connect(this, &SqlSession::doUseDatabase, m_worker, &SqlWorker::switchTo);
     connect(this, &SqlSession::doRefreshObjects, m_worker, &SqlWorker::refresh);
+    connect(this, &SqlSession::doColumns, m_worker, &SqlWorker::columns);
     connect(this, &SqlSession::doStats, m_worker, &SqlWorker::statsFor);
     connect(m_worker, &SqlWorker::connected, this, &SqlSession::onConnected);
     connect(m_worker, &SqlWorker::switched, this, &SqlSession::onSwitched);
     connect(m_worker, &SqlWorker::objectsRefreshed, this, &SqlSession::onObjectsRefreshed);
+    connect(m_worker, &SqlWorker::columnsReady, this, &SqlSession::onColumnsReady);
     connect(m_worker, &SqlWorker::failed, this, &SqlSession::onFailed);
     connect(m_worker, &SqlWorker::results, this, &SqlSession::onResults);
     connect(m_worker, &SqlWorker::statsReady, this, &SqlSession::onStats);
@@ -187,11 +209,14 @@ void SqlSession::connectWith(const QString& password, bool remember)
     m_password = password;
     m_remember = remember;
     m_errorText.clear();
+    m_errorIsAuth = false;
     emit errorChanged();
-    m_statusText = QStringLiteral("Connecting…");
-    emit statusChanged();
-    setState(Connecting);
-    emit doConnect(m_host, m_port, m_username, m_password, m_currentDatabase);
+    m_retryCount = 0;
+    m_backoffTimer.stop();
+    m_countdownTimer.stop();
+    m_retrySecondsLeft = 0;
+    emit retryChanged();
+    attemptConnect();
 }
 
 void SqlSession::reconnect()
@@ -203,11 +228,74 @@ void SqlSession::reconnect()
     if (m_state == Connecting || m_state == Connected || m_state == Executing)
         return;
     m_errorText.clear();
+    m_errorIsAuth = false;
     emit errorChanged();
-    m_statusText = QStringLiteral("Resuming…");
+    m_retryCount = 0;
+    m_backoffTimer.stop();
+    m_countdownTimer.stop();
+    m_retrySecondsLeft = 0;
+    emit retryChanged();
+    attemptConnect();
+}
+
+// Fires one connect attempt (first try or a backoff retry). The error text is
+// left intact so the retry UI can keep showing why the previous try failed.
+void SqlSession::attemptConnect()
+{
+    m_countdownTimer.stop();
+    m_retrySecondsLeft = 0;
+    ++m_retryCount;
+    emit retryChanged();
+    m_statusText = m_retryCount <= 1
+        ? QStringLiteral("Connecting…")
+        : QStringLiteral("Reconnecting… (attempt %1 of %2)").arg(m_retryCount).arg(kMaxRetries);
     emit statusChanged();
     setState(Connecting);
     emit doConnect(m_host, m_port, m_username, m_password, m_currentDatabase);
+}
+
+// Waits with exponential backoff (3s, 6s, 12s, 24s, capped at 30s), counting
+// down each second, then re-attempts. State stays Connecting throughout.
+void SqlSession::scheduleRetry()
+{
+    int delay = kBackoffBaseMs;
+    for (int i = 1; i < m_retryCount; ++i) {
+        delay *= 2;
+        if (delay >= kBackoffCapMs) { delay = kBackoffCapMs; break; }
+    }
+    m_retrySecondsLeft = (delay + 999) / 1000;
+    m_statusText = QStringLiteral("Connection failed — retrying in %1s… (attempt %2 of %3)")
+                       .arg(m_retrySecondsLeft).arg(m_retryCount + 1).arg(kMaxRetries);
+    emit statusChanged();
+    emit retryChanged();
+    m_countdownTimer.start();
+    m_backoffTimer.start(delay);
+}
+
+void SqlSession::abortConnect()
+{
+    m_backoffTimer.stop();
+    m_countdownTimer.stop();
+    m_retrySecondsLeft = 0;
+    emit retryChanged();
+    if (m_state == Connecting) {
+        m_statusText = QStringLiteral("Connection cancelled.");
+        emit statusChanged();
+        setState(Failed);
+    }
+}
+
+bool SqlSession::isAuthError(const QString& error)
+{
+    const QString e = error.toLower();
+    static const char* const markers[] = {
+        "login failed", "password", "authentication failed", "permission denied",
+        "not associated with a trusted", "28p01", "28000", "18456"
+    };
+    for (const char* m : markers)
+        if (e.contains(QLatin1String(m)))
+            return true;
+    return false;
 }
 
 QString SqlSession::sourceTable(const QString& sql)
@@ -293,6 +381,22 @@ void SqlSession::refreshObjects()
         return;
     kickIdle();
     emit doRefreshObjects();
+    emit doColumns();
+}
+
+void SqlSession::requestColumns()
+{
+    if (m_state != Connected)
+        return;
+    kickIdle();
+    emit doColumns();
+}
+
+void SqlSession::onColumnsReady(const QVariantMap& columns)
+{
+    m_columns = columns;
+    emit columnsChanged();
+    kickIdle();
 }
 
 void SqlSession::disconnectSession()
@@ -322,6 +426,11 @@ void SqlSession::onConnected(const QStringList& databases, const QString& curren
                              const QVariantList& objects)
 {
     m_haveConnected = true;
+    m_backoffTimer.stop();
+    m_countdownTimer.stop();
+    m_retryCount = 0;
+    m_retrySecondsLeft = 0;
+    emit retryChanged();
     m_databases = databases;
     emit databasesChanged();
     if (!currentDb.isEmpty() && currentDb != m_currentDatabase) {
@@ -335,6 +444,9 @@ void SqlSession::onConnected(const QStringList& databases, const QString& curren
     emit statusChanged();
     setState(Connected);
     kickIdle();
+
+    // Prefetch column metadata for editor autocompletion (background).
+    emit doColumns();
 
     // Persist the password now that we know it works, if asked.
     if (m_remember && !m_hostId.isEmpty() && !m_password.isEmpty())
@@ -356,6 +468,7 @@ void SqlSession::onSwitched(const QString& currentDb, const QVariantList& object
     m_objects = objects;
     m_tables = tableNames(objects);
     emit tablesChanged();
+    emit doColumns();   // refresh autocompletion columns for the new database
     kickIdle();
 }
 
@@ -371,7 +484,22 @@ void SqlSession::onFailed(const QString& error)
 {
     m_pendingSql.clear();
     m_errorText = error;
+    m_errorIsAuth = isAuthError(error);
     emit errorChanged();
+
+    // Auth failures won't fix themselves — stop and let the UI re-prompt. Other
+    // failures (unreachable server, network, timeout) are often transient on the
+    // first try, so auto-retry with backoff — unless the attempt was aborted
+    // (state no longer Connecting) or we have no password to retry with.
+    if (m_state == Connecting && !m_errorIsAuth && !m_password.isEmpty()
+        && m_retryCount < kMaxRetries) {
+        scheduleRetry();
+        return;
+    }
+    m_backoffTimer.stop();
+    m_countdownTimer.stop();
+    m_retrySecondsLeft = 0;
+    emit retryChanged();
     m_statusText = QStringLiteral("Connection failed.");
     emit statusChanged();
     setState(Failed);
@@ -385,6 +513,27 @@ QVariantList SqlSession::resultModels() const
     out.append(QVariant::fromValue(static_cast<QObject*>(m_result)));
     for (SqlResultModel* m : m_extraModels)
         out.append(QVariant::fromValue(static_cast<QObject*>(m)));
+    return out;
+}
+
+QVariantMap SqlSession::snapshotResults() const
+{
+    QVariantMap out;
+    QVariantList models;
+    if (!m_sets.isEmpty()) {
+        const auto adopt = [&](SqlResultModel* src) {
+            SqlResultModel* copy = src->clone(nullptr);
+            QQmlEngine::setObjectOwnership(copy, QQmlEngine::JavaScriptOwnership);
+            models.append(QVariant::fromValue(static_cast<QObject*>(copy)));
+        };
+        adopt(m_result);
+        for (SqlResultModel* m : m_extraModels)
+            adopt(m);
+    }
+    out.insert(QStringLiteral("models"), models);
+    out.insert(QStringLiteral("message"), m_message);
+    out.insert(QStringLiteral("error"), m_errorText);
+    out.insert(QStringLiteral("statsTable"), m_statsTable);
     return out;
 }
 

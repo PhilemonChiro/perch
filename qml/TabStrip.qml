@@ -100,7 +100,9 @@ Rectangle {
             currentIndex: root.current
             boundsBehavior: Flickable.StopAtBounds
             interactive: contentWidth > width
-            readonly property real tabWidth: count ? Math.max(150, Math.min(240, (width + slant * (count - 1)) / count + slant)) : 240
+            // Compact tabs: shrink toward content when there's room, only growing
+            // up to a modest cap, so a couple of tabs don't sprawl across the bar.
+            readonly property real tabWidth: count ? Math.max(118, Math.min(190, (width + slant * (count - 1)) / count + slant)) : 190
 
             add: Transition {
                 ParallelAnimation {
