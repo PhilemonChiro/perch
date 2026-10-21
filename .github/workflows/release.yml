@@ -54,7 +54,7 @@ jobs:
       # version changes (saves ~4 min/run).
       - name: Cache FreeRDP (Linux)
         if: runner.os == 'Linux'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/deps
           key: freerdp-${{ matrix.os }}-${{ env.FREERDP_VERSION }}-v1
@@ -91,7 +91,7 @@ jobs:
       # fails the build if a stale cache ever pins an older FreeRDP.
       - name: Cache vcpkg (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: C:\vcpkg\installed
           key: vcpkg-${{ matrix.os }}-freerdp-freetds-libpq-v2
