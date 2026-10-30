@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QQmlEngine>
 #include <QStringList>
@@ -15,6 +16,7 @@
 class SqlWorker;
 
 Q_DECLARE_METATYPE(QVector<SqlResultSet>)
+Q_DECLARE_METATYPE(QVector<SqlMessage>)
 
 // One SQL Server (MSSQL) connection. All FreeTDS db-lib calls run on a worker
 // thread (db-lib is single-threaded per connection); this object lives on the
@@ -63,8 +65,17 @@ class SqlSession : public QObject
     Q_PROPERTY(QStringList tables READ tables NOTIFY tablesChanged)
     // Full object browser: list of {name, type} maps (table/view/procedure/function).
     Q_PROPERTY(QVariantList objects READ objects NOTIFY tablesChanged)
-    // Column names per table for editor autocompletion: {"schema.table": [cols]}.
-    Q_PROPERTY(QVariantMap columns READ columns NOTIFY columnsChanged)
+    // Schema cache for editor IntelliSense (tables with typed columns, routines
+    // with parameters, foreign keys) for the current database; see
+    // SqlBackend::schema() for the shape.
+    Q_PROPERTY(QVariantMap schema READ schema NOTIFY schemaChanged)
+    // Server messages, row counts and errors from the last batch, in order:
+    // [{kind: "info"|"rows"|"error", text, line}] (line is the editor line, or 0).
+    Q_PROPERTY(QVariantList messages READ messages NOTIFY messageChanged)
+    // When false, a script split by GO keeps running later batches after one fails.
+    Q_PROPERTY(bool stopOnError READ stopOnError WRITE setStopOnError NOTIFY stopOnErrorChanged)
+    // True when the last run was cancelled by the user.
+    Q_PROPERTY(bool cancelled READ cancelled NOTIFY messageChanged)
     // Background-fetched stats for the single table the last SELECT read from.
     Q_PROPERTY(QString statsTable READ statsTable NOTIFY statsChanged)
     Q_PROPERTY(qint64 tableRowCount READ tableRowCount NOTIFY statsChanged)
@@ -111,7 +122,11 @@ public:
     QString currentDatabase() const { return m_currentDatabase; }
     QStringList tables() const { return m_tables; }
     QVariantList objects() const { return m_objects; }
-    QVariantMap columns() const { return m_columns; }
+    QVariantMap schema() const { return m_schema; }
+    QVariantList messages() const { return m_messages; }
+    bool stopOnError() const { return m_stopOnError; }
+    void setStopOnError(bool on);
+    bool cancelled() const { return m_cancelled; }
     QString statsTable() const { return m_statsTable; }
     qint64 tableRowCount() const { return m_tableRowCount; }
     qint64 tableSizeKb() const { return m_tableSizeKb; }
@@ -121,7 +136,7 @@ public:
     QVariantList resultModels() const;
     // Detached, JS-owned copy of the current results, so a query tab can keep
     // showing them after another tab's query reuses the live models. Returns a
-    // map: { models: [SqlResultModel*], message, error, statsTable }.
+    // map: { models: [SqlResultModel*], message, error, statsTable, messages }.
     Q_INVOKABLE QVariantMap snapshotResults() const;
 
     // Connects using a password held in memory for the tab's lifetime. When
@@ -133,13 +148,27 @@ public:
     Q_INVOKABLE void reconnect();
     // Runs arbitrary SQL in the current database context. If the session has
     // idled out, it reconnects first and runs the query once live ("resume").
-    Q_INVOKABLE void execute(const QString& sql);
+    // SQL Server scripts are split into batches on GO lines. `lineBase` is the
+    // 0-based editor line the SQL starts on, so message line numbers match the
+    // editor.
+    Q_INVOKABLE void execute(const QString& sql, int lineBase = 0);
+    // Cancels the running query; the connection stays usable.
+    Q_INVOKABLE void cancel();
+    // Seconds to wait on any server response before giving up (0 = forever).
+    Q_INVOKABLE void setQueryTimeout(int seconds);
+    // Deletes rows of `table` identified by its primary key (or a unique index)
+    // inside a transaction that commits only if exactly rows.size() rows go.
+    // `columns` names the result columns; each entry of `rows` is that row's
+    // values (null QVariant for SQL NULL). Reports through rowsDeleted(); never
+    // touches the current results. With `dryRun` it only builds the SQL.
+    Q_INVOKABLE void deleteRows(const QString& table, const QStringList& columns,
+                                const QVariantList& rows, bool dryRun = false);
     // Switches the active database (USE) and reloads its table list.
     Q_INVOKABLE void useDatabase(const QString& name);
     // Re-reads the object browser for the current database (manual refresh).
     Q_INVOKABLE void refreshObjects();
-    // Fetches column metadata for autocompletion (cached in `columns`).
-    Q_INVOKABLE void requestColumns();
+    // Fetches the IntelliSense schema (cached per database); `force` refetches.
+    Q_INVOKABLE void requestSchema(bool force = false);
     // Stops an in-progress connect, cancelling any pending auto-retry, and marks
     // the session Failed so the UI shows the error with a manual Retry.
     Q_INVOKABLE void abortConnect();
@@ -157,7 +186,11 @@ signals:
     void databasesChanged();
     void currentDatabaseChanged();
     void tablesChanged();
-    void columnsChanged();
+    void schemaChanged();
+    void stopOnErrorChanged();
+    // Outcome of deleteRows(): rows deleted (0 on error), an error message, the
+    // SQL that was (or, for a dry run, would be) run.
+    void rowsDeleted(int count, const QString& error, const QString& sql, bool dryRun);
     void statsChanged();
     void resultsChanged();
     // Emitted after a successful connect when the user chose to remember the
@@ -167,10 +200,12 @@ signals:
     // GUI -> worker (queued).
     void doConnect(const QString& host, int port, const QString& user,
                    const QString& password, const QString& database);
-    void doExecute(const QString& sql);
+    void doExecute(const QString& sql, bool stopOnError, int lineBase);
+    void doDelete(const QString& table, const QStringList& columns, const QVariantList& rows, bool dryRun);
+    void doQueryTimeout(int seconds);
     void doUseDatabase(const QString& name);
     void doRefreshObjects();
-    void doColumns();
+    void doSchema(const QString& database);
     void doStats(const QString& table);
 
 private:
@@ -185,11 +220,13 @@ private:
     static bool isAuthError(const QString& error);
     void onConnected(const QStringList& databases, const QString& currentDb, const QVariantList& objects);
     void onFailed(const QString& error);
-    void onResults(const QVector<SqlResultSet>& sets, qint64 elapsed, const QString& error);
+    void onConnectionLost(const QString& sql, int lineBase, bool rerun);
+    void onResults(const QVector<SqlResultSet>& sets, const QVector<SqlMessage>& messages,
+                   qint64 elapsed, const QString& error, bool cancelled);
     void rebuildModels();
     void onSwitched(const QString& currentDb, const QVariantList& objects);
     void onObjectsRefreshed(const QVariantList& objects);
-    void onColumnsReady(const QVariantMap& columns);
+    void onSchemaReady(const QString& database, const QVariantMap& schema);
     void onStats(const QString& table, qint64 rowCount, qint64 sizeKb);
     // Returns the single source table of a plain SELECT, or "" if the query
     // joins, lists several tables, or isn't a simple table read.
@@ -208,7 +245,11 @@ private:
     QString m_batchSql;                        // the last batch's SQL (for stats)
     QStringList m_databases, m_tables;
     QVariantList m_objects;
-    QVariantMap m_columns;
+    QVariantMap m_schema;
+    QHash<QString, QVariantMap> m_schemaCache;   // per database name
+    QVariantList m_messages;
+    bool m_stopOnError = true;
+    bool m_cancelled = false;
     QString m_currentDatabase;
 
     QString m_statsTable, m_pendingStatsTable;
@@ -217,6 +258,7 @@ private:
 
     QString m_password;    // in memory for the tab's lifetime (keychain only if remembered)
     QString m_pendingSql;  // a query to run once a resume completes
+    int m_pendingLineBase = 0;
     bool m_haveConnected = false;
     bool m_remember = false;
 

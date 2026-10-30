@@ -10,6 +10,7 @@
 #include <QVector>
 
 #include <algorithm>
+#include <functional>
 
 // A single SQL result set, exposed to QML's TableView. Columns come from the
 // query; every cell is held as a string (db-lib hands us text-bound columns in
@@ -131,6 +132,41 @@ public:
             return {};
         const QString v = m_rows.at(r).at(c);
         return v.isNull() ? QStringLiteral("NULL") : v;
+    }
+
+    // One row's values in column order, with a true SQL NULL as a null
+    // QVariant (unlike cellText(), which can't tell NULL from the text "NULL").
+    Q_INVOKABLE QVariantList rowValues(int r) const
+    {
+        QVariantList out;
+        if (r < 0 || r >= m_rows.size())
+            return out;
+        for (const QString& v : m_rows.at(r))
+            out.append(v.isNull() ? QVariant() : QVariant(v));
+        return out;
+    }
+
+    // Removes the given view rows (e.g. after they were deleted on the server),
+    // keeping the full fetched set in step so a later filter doesn't bring them
+    // back.
+    Q_INVOKABLE void removeRows(const QVariantList& indices)
+    {
+        QList<int> idx;
+        for (const QVariant& v : indices)
+            idx << v.toInt();
+        std::sort(idx.begin(), idx.end(), std::greater<int>());
+        idx.erase(std::unique(idx.begin(), idx.end()), idx.end());
+        for (int r : std::as_const(idx)) {
+            if (r < 0 || r >= m_rows.size())
+                continue;
+            const int at = int(m_allRows.indexOf(m_rows.at(r)));
+            if (at >= 0)
+                m_allRows.remove(at);
+            beginRemoveRows({}, r, r);
+            m_rows.remove(r);
+            endRemoveRows();
+        }
+        emit resetted();
     }
 
     // Writes the given view-row indices (or every row when `rows` is empty) to a

@@ -69,6 +69,7 @@ qt_add_qml_module(relay
         src/RdpView.h src/RdpView.cpp
         src/SqlResultModel.h
         src/SqlHighlighter.h
+        src/SqlEditorOps.h src/SqlEditorOps.cpp
         src/Clipboard.h
         src/SqlBackend.h
         src/TdsBackend.h src/TdsBackend.cpp
@@ -99,6 +100,8 @@ qt_add_qml_module(relay
         qml/components/Toast.qml
         qml/components/Toggle.qml
         qml/components/ResultGrid.qml
+        qml/components/SqlEditor.qml
+        qml/components/SqlAssist.js
         qml/UpdateDialog.qml
     RESOURCES ${RELAY_ICONS}
 )

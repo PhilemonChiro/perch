@@ -21,6 +21,38 @@ Item {
     signal serverSearch(string sql)     // host executes this SQL
     signal stageSql(string sql)         // host puts this SQL in the editor, unrun
     signal activated()                  // a cell here was selected
+    // Delete these view rows on the server (dryRun: only build the SQL). The
+    // host answers with deleteFinished().
+    signal deleteRequested(var indices, bool dryRun)
+
+    // Table the rows came from (empty when unknown), and why deleting is
+    // unavailable when it is.
+    property string deleteTable: ""
+    property string deleteBlockedReason: ""
+    property bool deleteBusy: false
+    property string deleteError: ""
+    property var deleteIndices: []
+    readonly property bool canDelete: deleteTable !== ""
+    // Rows a delete acts on: the ticked ones, else the current row.
+    function deleteTargets() {
+        if (checkCount > 0) return checkedIndices()
+        return selRow >= 0 ? [selRow] : []
+    }
+    // Opens the confirm popover for the targeted rows.
+    function askDelete() {
+        if (!hasGrid || deleteBusy) return
+        const idx = deleteTargets()
+        if (!idx.length) return
+        if (!canDelete) { rg.toast(deleteBlockedReason, "error"); return }
+        deleteIndices = idx
+        deleteError = ""
+        deletePop.open()
+    }
+    function deleteFinished(error) {
+        deleteBusy = false
+        deleteError = error || ""
+        if (!deleteError) deletePop.close()
+    }
 
     // Row ticking for batch operations. Selection is by view-row index; it is
     // cleared whenever the view changes (reset / sort / filter) so indices stay
@@ -145,21 +177,6 @@ Item {
         }
         Clipboard.copy(lines.join("\n"))
         rg.toast(qsTr("Copied %1 INSERT statements").arg(idx.length), "info")
-    }
-    // Build a reviewable DELETE for the ticked rows and hand it to the editor —
-    // never executed. Keys on the first column (usually the id/PK).
-    function generateCheckedDelete() {
-        if (!model || model.columns.length === 0) return
-        const idx = checkedIndices()
-        if (!idx.length) return
-        const keyCol = model.columns[0]
-        const keys = idx.map(r => rg.sqlLiteral(model.cellText(r, 0)))
-        const sql = "DELETE FROM " + batchTable + "\nWHERE " + keyCol + " IN (\n    "
-                  + keys.join("\n  , ") + "\n);"
-        rg.stageSql(sql)
-        rg.toast(serverTable !== ""
-                 ? qsTr("DELETE staged in the editor — review before running")
-                 : qsTr("DELETE staged — set the table name, then review before running"), "info")
     }
     function exportCheckedCsv() {
         if (!model) return
@@ -449,6 +466,88 @@ Item {
 
                 // Keep the controls left-grouped; the input stays capped.
                 Item { Layout.fillWidth: true }
+
+                // Delete the ticked rows (or the current row) — also the Delete key.
+                AbstractButton {
+                    id: delBtn
+                    readonly property int n: rg.checkCount > 0 ? rg.checkCount : (rg.selRow >= 0 ? 1 : 0)
+                    implicitHeight: 30; implicitWidth: 30
+                    hoverEnabled: true
+                    focusPolicy: Qt.NoFocus
+                    opacity: n > 0 && rg.canDelete ? 1 : 0.45
+                    onClicked: rg.askDelete()
+                    ToolTip.visible: hovered; ToolTip.delay: 300
+                    ToolTip.text: !rg.canDelete ? rg.deleteBlockedReason
+                                : n === 0 ? qsTr("Select or tick rows to delete them")
+                                : qsTr("Delete %n row(s) from %1", "", n).arg(rg.deleteTable)
+                    background: Rectangle {
+                        radius: Theme.radiusSm
+                        color: delBtn.hovered && delBtn.n > 0 && rg.canDelete ? Theme.dangerSoft : "transparent"
+                    }
+                    contentItem: Item {
+                        Icon {
+                            anchors.centerIn: parent; name: "trash"; size: 14
+                            color: delBtn.hovered && delBtn.n > 0 && rg.canDelete ? Theme.danger : Theme.textDim
+                        }
+                    }
+
+                    // Inline confirm: "Delete N rows from <table>?"
+                    Popup {
+                        id: deletePop
+                        y: delBtn.height + 6
+                        x: delBtn.width - width
+                        width: 330
+                        padding: 14
+                        closePolicy: rg.deleteBusy ? Popup.NoAutoClose : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
+                        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.color: Theme.borderStrong }
+                        contentItem: ColumnLayout {
+                            spacing: 10
+                            Text {
+                                Layout.fillWidth: true
+                                text: qsTr("Delete %n row(s) from %1?", "", rg.deleteIndices.length).arg(rg.deleteTable)
+                                color: Theme.text; font.pixelSize: Theme.fontMd; font.weight: Font.DemiBold
+                                wrapMode: Text.Wrap
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: qsTr("Rows are matched on the table's key, in a transaction that only commits if exactly that many rows are deleted.")
+                                color: Theme.textDim; font.pixelSize: Theme.fontXs; wrapMode: Text.Wrap
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                visible: rg.deleteError !== ""
+                                text: rg.deleteError
+                                color: Theme.danger; font.pixelSize: Theme.fontSm; wrapMode: Text.Wrap
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                Text {
+                                    text: qsTr("Show SQL")
+                                    color: showSqlHover.hovered ? Theme.accentHover : Theme.accent
+                                    font.pixelSize: Theme.fontSm; font.underline: showSqlHover.hovered
+                                    HoverHandler { id: showSqlHover; cursorShape: Qt.PointingHandCursor }
+                                    TapHandler {
+                                        enabled: !rg.deleteBusy
+                                        onTapped: { rg.deleteBusy = true; rg.deleteRequested(rg.deleteIndices, true) }
+                                    }
+                                }
+                                Item { Layout.fillWidth: true }
+                                GhostButton {
+                                    text: qsTr("Cancel"); implicitHeight: 28
+                                    enabled: !rg.deleteBusy
+                                    onClicked: deletePop.close()
+                                }
+                                PrimaryButton {
+                                    destructive: true
+                                    text: qsTr("Delete"); implicitHeight: 28
+                                    busy: rg.deleteBusy
+                                    onClicked: { rg.deleteBusy = true; rg.deleteError = ""; rg.deleteRequested(rg.deleteIndices, false) }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -470,7 +569,13 @@ Item {
                 GhostButton { text: qsTr("Copy"); implicitHeight: 28; onClicked: rg.copyCheckedTsv() }
                 GhostButton { text: qsTr("JSON"); implicitHeight: 28; onClicked: rg.copyCheckedJson() }
                 GhostButton { text: qsTr("INSERTs"); implicitHeight: 28; onClicked: rg.copyCheckedInsert() }
-                GhostButton { text: qsTr("DELETE…"); implicitHeight: 28; onClicked: rg.generateCheckedDelete() }
+                GhostButton {
+                    text: qsTr("Delete…"); implicitHeight: 28
+                    opacity: rg.canDelete ? 1 : 0.5
+                    onClicked: rg.askDelete()
+                    ToolTip.visible: hovered && !rg.canDelete; ToolTip.delay: 300
+                    ToolTip.text: rg.deleteBlockedReason
+                }
                 GhostButton { text: qsTr("Export CSV"); implicitHeight: 28; onClicked: rg.exportCheckedCsv() }
                 Item { Layout.fillWidth: true }
                 AbstractButton {
