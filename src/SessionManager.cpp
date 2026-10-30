@@ -77,6 +77,22 @@ int SessionManager::add(QObject* s)
                     if (r->hostId().isEmpty())
                         return;
                     auto* store = ConnectionStore::instance();
+                    // A host on a saved credential set reads its password from the set:
+                    // same account means the password changed, so update the set (every
+                    // host sharing it benefits); a different account detaches this host.
+                    if (const QString credId = r->credentialId(); !credId.isEmpty()) {
+                        QVariantMap cred = CredentialStore::instance()->get(credId);
+                        if (!cred.isEmpty() && cred.value("username") == user && cred.value("domain") == domain) {
+                            if (remember) {
+                                cred["password"] = password;
+                                CredentialStore::instance()->save(cred);
+                            }
+                            store->touch(r->hostId());
+                            return;
+                        }
+                        store->setCredential(r->hostId(), QString());
+                        r->setCredentialId(QString());
+                    }
                     QVariantMap h = store->host(r->hostId());
                     if (!h.isEmpty() && (h.value("username") != user || h.value("domain") != domain)) {
                         h["username"] = user;
