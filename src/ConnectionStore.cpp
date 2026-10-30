@@ -313,6 +313,7 @@ void ConnectionStore::load()
         h.share = o.value("share").toString();
         h.gateway = o.value("gateway").toString();
         h.useUdp = o.value("useUdp").toBool();
+        h.cmdAsCtrl = o.value("cmdAsCtrl").toBool(true);
         h.credentialId = o.value("credentialId").toString();
         h.lastConnected = qint64(o.value("lastConnected").toDouble());
         m_hosts.append(h);
@@ -331,7 +332,7 @@ void ConnectionStore::save() const
                                  {"port", h.port}, {"username", h.username},
                                  {"domain", h.domain}, {"folderId", h.folderId},
                                  {"share", h.share}, {"gateway", h.gateway},
-                                 {"useUdp", h.useUdp},
+                                 {"useUdp", h.useUdp}, {"cmdAsCtrl", h.cmdAsCtrl},
                                  {"credentialId", h.credentialId},
                                  {"lastConnected", double(h.lastConnected)}});
     QSaveFile f(storePath());
@@ -387,6 +388,7 @@ QVariantMap ConnectionStore::hostMap(const Host& h) const
             {"share", h.share},
             {"gateway", h.gateway},
             {"useUdp", h.useUdp},
+            {"cmdAsCtrl", h.cmdAsCtrl},
             {"credentialId", h.credentialId},
             {"lastConnected", h.lastConnected}};
 }
@@ -441,6 +443,7 @@ QString ConnectionStore::saveHost(const QVariantMap& m)
     h.share = m.value("share").toString().trimmed();
     h.gateway = m.value("gateway").toString().trimmed();
     h.useUdp = m.value("useUdp").toBool();
+    h.cmdAsCtrl = m.value("cmdAsCtrl", true).toBool();
     h.credentialId = m.value("credentialId").toString();
     if (const int p = folderIndex(h.folderId); p >= 0)
         m_folders[p].expanded = true;

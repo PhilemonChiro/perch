@@ -53,6 +53,15 @@ qt_add_executable(relay WIN32 MACOSX_BUNDLE
     src/main.cpp
 )
 
+# AppKit bridge (concealed pasteboard items, reduce motion, reveal in Finder).
+if(APPLE)
+    enable_language(OBJCXX)
+    target_sources(relay PRIVATE src/MacPasteboard.mm)
+    target_link_libraries(relay PRIVATE "-framework AppKit")
+else()
+    target_sources(relay PRIVATE src/MacPasteboard.cpp)
+endif()
+
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 file(GLOB RELAY_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} icons/*.svg)
@@ -67,6 +76,8 @@ qt_add_qml_module(relay
         src/SessionManager.h src/SessionManager.cpp
         src/RdpSession.h src/RdpSession.cpp
         src/RdpView.h src/RdpView.cpp
+        src/RdpClipboard.h src/RdpClipboard.cpp
+        src/MacPasteboard.h
         src/SqlResultModel.h
         src/SqlHighlighter.h
         src/SqlEditorOps.h src/SqlEditorOps.cpp
@@ -85,6 +96,7 @@ qt_add_qml_module(relay
         qml/Home.qml
         qml/SessionPage.qml
         qml/CommandPalette.qml
+        qml/ClipboardPalette.qml
         qml/ConnectionEditor.qml
         qml/CredentialManager.qml
         qml/CredentialPicker.qml
@@ -98,6 +110,7 @@ qt_add_qml_module(relay
         qml/components/StatusDot.qml
         qml/components/Card.qml
         qml/components/Toast.qml
+        qml/components/ClipboardCapsule.qml
         qml/components/Toggle.qml
         qml/components/ResultGrid.qml
         qml/components/SqlEditor.qml

@@ -157,6 +157,40 @@ Item {
         }
     }
 
+    // Clipboard capsule, below the fullscreen toolbar while that is shown.
+    ClipboardCapsule {
+        id: capsule
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: toolbar.visible && toolbar.y > 0 ? toolbar.y + toolbar.height + 8 : 8
+        Behavior on y { NumberAnimation { duration: Theme.slow; easing.type: Easing.OutQuint } }
+        z: 15
+        board: page.sessionObj ? page.sessionObj.clipboard : null
+        serverName: page.sessionObj ? page.sessionObj.title : ""
+        live: page.live && page.active
+        onOpenHistory: history.open()
+        onReturnFocus: if (page.active && page.live) view.forceActiveFocus()
+    }
+
+    ClipboardPalette {
+        id: history
+        board: page.sessionObj ? page.sessionObj.clipboard : null
+        serverName: page.sessionObj ? page.sessionObj.title : ""
+        onClosed: if (page.active && page.live) view.forceActiveFocus()
+    }
+
+    // Clipboard shortcuts (RdpView leaves these combos to the app; keep in sync
+    // with isAppShortcut there).
+    Shortcut {
+        sequence: Theme.seq("Shift+V")
+        enabled: page.active && page.live
+        onActivated: history.toggle()
+    }
+    Shortcut {
+        sequence: Theme.mac ? "Ctrl+Alt+Shift+V" : "Ctrl+Alt+Shift+P"
+        enabled: page.active && page.live
+        onActivated: page.sessionObj.clipboard.pastePlainText()
+    }
+
     FolderDialog {
         id: folderDialog
         title: qsTr("Share a folder into this session")

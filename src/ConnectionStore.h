@@ -77,6 +77,7 @@ private:
         QString type = QStringLiteral("rdp"); // "rdp" | "mssql"
         QString database;                     // default database for mssql
         bool useUdp = false;
+        bool cmdAsCtrl = true; // macOS: Cmd acts as Ctrl in RDP sessions
         int port = 3389;
         qint64 lastConnected = 0;
     };

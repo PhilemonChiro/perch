@@ -87,7 +87,7 @@ int SessionManager::add(QObject* s)
                         Credentials::write(r->hostId(), password);
                     store->touch(r->hostId());
                 });
-        r->setLocalClipboard(QGuiApplication::clipboard()->text());
+        r->clipboard()->setLocal(RdpClipboard::captureSystem(false));
     } else if (auto* q = qobject_cast<SqlSession*>(s)) {
         connect(q, &SqlSession::stateChanged, this, emitState);
         connect(q, &SqlSession::stateChanged, this, [q] {
@@ -140,6 +140,7 @@ int SessionManager::openHost(const QString& hostId)
     s->setSharedFolder(h.value("share").toString());
     s->setGateway(h.value("gateway").toString());
     s->setUseUdp(h.value("useUdp").toBool());
+    s->setCmdAsCtrl(h.value("cmdAsCtrl", true).toBool());
     s->setCredentialId(h.value("credentialId").toString());
     const int row = add(s);
     QPointer<RdpSession> guard(s);
@@ -171,6 +172,7 @@ int SessionManager::openHostWithPassword(const QString& hostId, const QString& p
     s->setSharedFolder(h.value("share").toString());
     s->setGateway(h.value("gateway").toString());
     s->setUseUdp(h.value("useUdp").toBool());
+    s->setCmdAsCtrl(h.value("cmdAsCtrl", true).toBool());
     s->setCredentialId(h.value("credentialId").toString());
     const int row = add(s);
     s->startWithPassword(password);
@@ -332,8 +334,9 @@ void SessionManager::storePassword(const QString& hostId, const QString& passwor
 
 void SessionManager::broadcastClipboard()
 {
-    const QString text = QGuiApplication::clipboard()->text();
+    // Snapshot once (and record it in the history once), then offer it to every session.
+    const ClipItem item = RdpClipboard::captureSystem(true);
     for (const auto& s : std::as_const(m_sessions))
         if (auto* r = qobject_cast<RdpSession*>(s.data()))
-            r->setLocalClipboard(text);
+            r->clipboard()->setLocal(item);
 }

@@ -164,7 +164,7 @@ struct RdpCallbacks {
         auto* ctx = static_cast<rdpContext*>(context);
         RdpSession* self = selfOf(ctx);
         if (std::strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0)
-            self->m_cliprdr = nullptr;
+            self->m_clip->detach();
         else if (std::strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0) {
             self->m_disp = nullptr;
             self->m_dispReady = false;
@@ -184,87 +184,6 @@ struct RdpCallbacks {
         SetEvent(self->m_wakeEvent);
         return CHANNEL_RC_OK;
     }
-
-    // --- Clipboard (text) ---
-    static RdpSession* clipSelf(CliprdrClientContext* c) { return static_cast<RdpSession*>(c->custom); }
-
-    static UINT clipMonitorReady(CliprdrClientContext* c, const CLIPRDR_MONITOR_READY*)
-    {
-        CLIPRDR_GENERAL_CAPABILITY_SET general{};
-        general.capabilitySetType = CB_CAPSTYPE_GENERAL;
-        general.capabilitySetLength = CB_CAPSTYPE_GENERAL_LEN;
-        general.version = CB_CAPS_VERSION_2;
-        general.generalFlags = CB_USE_LONG_FORMAT_NAMES;
-        CLIPRDR_CAPABILITIES caps{};
-        caps.cCapabilitiesSets = 1;
-        caps.capabilitySets = reinterpret_cast<CLIPRDR_CAPABILITY_SET*>(&general);
-        const UINT rc = c->ClientCapabilities(c, &caps);
-        if (rc != CHANNEL_RC_OK)
-            return rc;
-        clipSelf(c)->sendClipboardFormatList();
-        return CHANNEL_RC_OK;
-    }
-
-    static UINT clipServerCaps(CliprdrClientContext*, const CLIPRDR_CAPABILITIES*) { return CHANNEL_RC_OK; }
-
-    static UINT clipServerFormatList(CliprdrClientContext* c, const CLIPRDR_FORMAT_LIST* list)
-    {
-        CLIPRDR_FORMAT_LIST_RESPONSE resp{};
-        resp.common.msgType = CB_FORMAT_LIST_RESPONSE;
-        resp.common.msgFlags = CB_RESPONSE_OK;
-        const UINT rc = c->ClientFormatListResponse(c, &resp);
-        if (rc != CHANNEL_RC_OK)
-            return rc;
-
-        UINT32 wanted = 0;
-        for (UINT32 i = 0; i < list->numFormats; ++i) {
-            if (list->formats[i].formatId == CF_UNICODETEXT) {
-                wanted = CF_UNICODETEXT;
-                break;
-            }
-            if (list->formats[i].formatId == CF_TEXT)
-                wanted = CF_TEXT;
-        }
-        if (!wanted)
-            return CHANNEL_RC_OK;
-        clipSelf(c)->m_requestedFormat = wanted;
-        CLIPRDR_FORMAT_DATA_REQUEST req{};
-        req.common.msgType = CB_FORMAT_DATA_REQUEST;
-        req.requestedFormatId = wanted;
-        return c->ClientFormatDataRequest(c, &req);
-    }
-
-    static UINT clipServerFormatListResponse(CliprdrClientContext*, const CLIPRDR_FORMAT_LIST_RESPONSE*)
-    {
-        return CHANNEL_RC_OK;
-    }
-
-    static UINT clipServerFormatDataRequest(CliprdrClientContext* c, const CLIPRDR_FORMAT_DATA_REQUEST* req)
-    {
-        CLIPRDR_FORMAT_DATA_RESPONSE resp{};
-        resp.common.msgType = CB_FORMAT_DATA_RESPONSE;
-        QByteArray data;
-        if (req->requestedFormatId == CF_UNICODETEXT) {
-            data = clipSelf(c)->localClipboardUtf16();
-            resp.common.msgFlags = CB_RESPONSE_OK;
-            resp.common.dataLen = UINT32(data.size());
-            resp.requestedFormatData = reinterpret_cast<const BYTE*>(data.constData());
-        } else {
-            resp.common.msgFlags = CB_RESPONSE_FAIL;
-        }
-        return c->ClientFormatDataResponse(c, &resp);
-    }
-
-    static UINT clipServerFormatDataResponse(CliprdrClientContext* c, const CLIPRDR_FORMAT_DATA_RESPONSE* resp)
-    {
-        if (!(resp->common.msgFlags & CB_RESPONSE_OK) || !resp->requestedFormatData)
-            return CHANNEL_RC_OK;
-        RdpSession* self = clipSelf(c);
-        self->applyRemoteClipboard(
-            QByteArray(reinterpret_cast<const char*>(resp->requestedFormatData), int(resp->common.dataLen)),
-            self->m_requestedFormat == CF_UNICODETEXT);
-        return CHANNEL_RC_OK;
-    }
 };
 
 RdpSession::RdpSession(const QString& hostId, const QString& title, const QString& host, int port,
@@ -278,6 +197,13 @@ RdpSession::RdpSession(const QString& hostId, const QString& title, const QStrin
     , m_domain(domain)
 {
     m_wakeEvent = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+    m_clip = new RdpClipboard(this);
+}
+
+void RdpSession::wake()
+{
+    if (m_wakeEvent)
+        SetEvent(m_wakeEvent);
 }
 
 RdpSession::~RdpSession()
@@ -677,6 +603,7 @@ bool RdpSession::onPostConnect()
         emit remoteSizeChanged();
         setStatus(tr("Starting the desktop…"), 3);
         setState(Connected);
+        m_clip->sessionConnected();
     });
     return true;
 }
@@ -684,7 +611,7 @@ bool RdpSession::onPostConnect()
 void RdpSession::onPostDisconnect()
 {
     gdi_free(m_context->instance);
-    m_cliprdr = nullptr;
+    m_clip->detach();
     m_disp = nullptr;
     m_dispReady = false;
 }
@@ -791,14 +718,7 @@ unsigned long RdpSession::onVerifyCertificate(const char* host, quint16 port, co
 
 void RdpSession::onClipboardConnected(CliprdrClientContext* c)
 {
-    m_cliprdr = c;
-    c->custom = this;
-    c->MonitorReady = RdpCallbacks::clipMonitorReady;
-    c->ServerCapabilities = RdpCallbacks::clipServerCaps;
-    c->ServerFormatList = RdpCallbacks::clipServerFormatList;
-    c->ServerFormatListResponse = RdpCallbacks::clipServerFormatListResponse;
-    c->ServerFormatDataRequest = RdpCallbacks::clipServerFormatDataRequest;
-    c->ServerFormatDataResponse = RdpCallbacks::clipServerFormatDataResponse;
+    m_clip->attach(c);
 }
 
 void RdpSession::onDispConnected(DispClientContext* disp)
@@ -811,18 +731,14 @@ void RdpSession::onDispConnected(DispClientContext* disp)
 void RdpSession::processPending()
 {
     QSize resize;
-    bool clipboard;
     {
         QMutexLocker lock(&m_pendingMutex);
         resize = m_pendingResize;
         m_pendingResize = QSize();
-        clipboard = m_pendingClipboard;
-        m_pendingClipboard = false;
     }
     if (resize.isValid())
         sendMonitorLayout(resize);
-    if (clipboard)
-        sendClipboardFormatList();
+    m_clip->processPending();
 }
 
 void RdpSession::sendMonitorLayout(const QSize& size)
@@ -845,65 +761,6 @@ void RdpSession::sendMonitorLayout(const QSize& size)
     layout.DesktopScaleFactor = UINT32(scale);
     layout.DeviceScaleFactor = scale >= 180 ? 180 : scale >= 140 ? 140 : 100;
     (void)m_disp->SendMonitorLayout(m_disp, 1, &layout);
-}
-
-void RdpSession::sendClipboardFormatList()
-{
-    if (!m_cliprdr)
-        return;
-    bool hasText;
-    {
-        QMutexLocker lock(&m_pendingMutex);
-        hasText = !m_localClipboard.isEmpty();
-    }
-    CLIPRDR_FORMAT format{CF_UNICODETEXT, nullptr};
-    CLIPRDR_FORMAT_LIST list{};
-    list.common.msgType = CB_FORMAT_LIST;
-    list.numFormats = hasText ? 1 : 0;
-    list.formats = hasText ? &format : nullptr;
-    (void)m_cliprdr->ClientFormatList(m_cliprdr, &list);
-}
-
-QByteArray RdpSession::localClipboardUtf16() const
-{
-    QString text;
-    {
-        QMutexLocker lock(&m_pendingMutex);
-        text = m_localClipboard;
-    }
-    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n")).replace('\n', QStringLiteral("\r\n"));
-    QByteArray out(reinterpret_cast<const char*>(text.utf16()), text.size() * 2);
-    out.append(2, '\0');
-    return out;
-}
-
-void RdpSession::applyRemoteClipboard(const QByteArray& data, bool unicode)
-{
-    QString text = unicode ? QString::fromUtf16(reinterpret_cast<const char16_t*>(data.constData()), data.size() / 2)
-                           : QString::fromLatin1(data);
-    while (text.endsWith(QChar(0)))
-        text.chop(1);
-#ifndef Q_OS_WIN
-    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-#endif
-    post([this, text] {
-        m_lastRemoteClipboard = text;
-        QGuiApplication::clipboard()->setText(text);
-    });
-}
-
-void RdpSession::setLocalClipboard(const QString& text)
-{
-    // Don't bounce the server's own clipboard back to it.
-    const bool echo = text == m_lastRemoteClipboard;
-    {
-        QMutexLocker lock(&m_pendingMutex);
-        m_localClipboard = text;
-        if (!echo)
-            m_pendingClipboard = true;
-    }
-    if (!echo && m_wakeEvent)
-        SetEvent(m_wakeEvent);
 }
 
 QImage RdpSession::frame() const

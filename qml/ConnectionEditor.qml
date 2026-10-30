@@ -35,6 +35,7 @@ Popup {
     function reset() {
         nameF.text = ""; hostF.text = ""; portF.text = "3389"; gatewayF.text = ""
         udpSwitch.checked = false
+        cmdSwitch.checked = true
         sharePath = ""
         credentialId = ""
         folderId = ""
@@ -76,6 +77,7 @@ Popup {
         dbF.text = h.database || ""
         gatewayF.text = h.gateway || ""
         udpSwitch.checked = h.useUdp || false
+        cmdSwitch.checked = h.cmdAsCtrl !== false
         sharePath = h.share || ""
         credentialId = h.credentialId || ""
         folderId = h.folderId || ""
@@ -100,7 +102,7 @@ Popup {
             username: root.isSql ? userF.text.trim()
                     : (credentialId === "" ? (prev.username || "") : ""),
             domain: credentialId === "" ? (prev.domain || "") : "",
-            share: sharePath, gateway: gatewayF.text, useUdp: udpSwitch.checked,
+            share: sharePath, gateway: gatewayF.text, useUdp: udpSwitch.checked, cmdAsCtrl: cmdSwitch.checked,
             credentialId: root.isSql ? "" : credentialId, folderId: folderId
         })
         close()
@@ -385,6 +387,24 @@ Popup {
                     Text {
                         width: parent.width
                         text: qsTr("Faster on lossy or high-latency links, but opens an extra UDP channel. Off uses TCP only.")
+                        color: Theme.textFaint
+                        font.pixelSize: Theme.fontXs
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                Column {
+                    Layout.fillWidth: true
+                    spacing: 5
+                    visible: !root.isSql && Theme.mac
+                    Toggle {
+                        id: cmdSwitch
+                        checked: true
+                        label: qsTr("Use ⌘ as Ctrl")
+                    }
+                    Text {
+                        width: parent.width
+                        text: qsTr("⌘C, ⌘V, ⌘Z and friends act as Ctrl shortcuts on the server. Off sends ⌘ as the Windows key.")
                         color: Theme.textFaint
                         font.pixelSize: Theme.fontXs
                         wrapMode: Text.WordWrap

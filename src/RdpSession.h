@@ -8,6 +8,8 @@
 #include <QVariantMap>
 #include <QWaitCondition>
 
+#include "RdpClipboard.h"
+
 #include <atomic>
 #include <functional>
 #include <thread>
@@ -45,6 +47,8 @@ class RdpSession : public QObject
     Q_PROPERTY(QString sharedFolder READ sharedFolder NOTIFY sharedFolderChanged)
     Q_PROPERTY(bool remounting READ remounting NOTIFY remountingChanged)
     Q_PROPERTY(QString credentialId READ credentialId NOTIFY credentialIdChanged)
+    Q_PROPERTY(RdpClipboard* clipboard READ clipboard CONSTANT)
+    Q_PROPERTY(bool cmdAsCtrl READ cmdAsCtrl CONSTANT)
 
 public:
     enum State { Idle, NeedsCredentials, Connecting, VerifyingCertificate, Connected, Disconnected, Failed };
@@ -103,6 +107,13 @@ public:
     // links) for this connection. Off by default: TCP-only is the safe default
     // and UDP is extra attack surface. Set before the first connect.
     void setUseUdp(bool on) { m_useUdp = on; }
+    // macOS: send Cmd as Ctrl (Cmd+C -> Ctrl+C) instead of the Windows key.
+    // Set before the view first sees the session.
+    void setCmdAsCtrl(bool on) { m_cmdAsCtrl = on; }
+    bool cmdAsCtrl() const { return m_cmdAsCtrl; }
+    RdpClipboard* clipboard() const { return m_clip; }
+    // Wakes the worker to process queued GUI requests (resize, clipboard).
+    void wake();
 
     Q_INVOKABLE void signIn(const QString& username, const QString& password, const QString& domain,
                             bool remember);
@@ -121,7 +132,6 @@ public:
     void sendKey(bool down, bool repeat, quint32 rdpScancode);
     // Sends Ctrl+Alt+Del to the remote (the local OS swallows the real combo).
     Q_INVOKABLE void sendCtrlAltDel();
-    void setLocalClipboard(const QString& text);
 
 signals:
     void stateChanged();
@@ -160,10 +170,7 @@ private:
     void onClipboardConnected(s_cliprdr_client_context* cliprdr);
     void onDispConnected(s_disp_client_context* disp);
     void processPending();
-    void sendClipboardFormatList();
     void sendMonitorLayout(const QSize& size);
-    void applyRemoteClipboard(const QByteArray& utf16, bool unicode);
-    QByteArray localClipboardUtf16() const;
 
     // Immutable after construction.
     const QString m_hostId, m_title, m_host;
@@ -173,13 +180,14 @@ private:
     QString m_username, m_domain, m_password, m_sharedFolder, m_gateway, m_credentialId;
     bool m_remember = false;
     bool m_useUdp = false;
+    bool m_cmdAsCtrl = true;
     State m_state = Idle;
     QString m_statusText, m_errorText;
     int m_stage = 0;
     QSize m_remoteSize;
     bool m_hasFrame = false;
     QVariantMap m_certificate;
-    QString m_lastRemoteClipboard;
+    RdpClipboard* m_clip = nullptr;
 
     // Worker.
     std::thread m_thread;
@@ -200,15 +208,11 @@ private:
     QSize m_viewport{1600, 900};
     int m_scale = 100;
     QSize m_pendingResize;
-    bool m_pendingClipboard = false;
-    QString m_localClipboard;
 
     QMutex m_certMutex;
     QWaitCondition m_certCond;
     int m_certVerdict = -1;
 
-    s_cliprdr_client_context* m_cliprdr = nullptr;
     s_disp_client_context* m_disp = nullptr;
     std::atomic<bool> m_dispReady{false};
-    quint32 m_requestedFormat = 0;
 };
