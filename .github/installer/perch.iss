@@ -48,4 +48,4 @@ Name: "{group}\Uninstall Perch"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\Perch"; Filename: "{app}\Perch.exe"; IconFilename: "{app}\perch.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Perch.exe"; Description: "Launch Perch"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Perch.exe"; Description: "Launch Perch"; Flags: nowait postinstall

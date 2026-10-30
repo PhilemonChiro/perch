@@ -1,12 +1,19 @@
 #include "UpdateChecker.h"
 
+#include <QCoreApplication>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QProcess>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QUrl>
 
 #define UC_STRINGIFY(x) #x
@@ -55,16 +62,11 @@ void UpdateChecker::checkForUpdates()
         m_latest = QStringLiteral("0.2.0");
         m_name = QStringLiteral("Perch 0.2.0");
         m_notes = QStringLiteral(
-            "## What's Changed\n"
-            "* Add collapsible object-browser folders with per-type icons\n"
-            "* Add SQL IntelliSense with table and column completion\n"
-            "* Add batch row operations: copy, INSERTs, generate DELETE, export CSV\n"
-            "* Add a single-instance guard so a second launch focuses the running window\n"
-            "* Improve metadata fetch to read the catalog directly\n"
-            "* Improve connecting with automatic retry and exponential backoff\n"
-            "* Fix the Windows installer to bundle the correct x64 MSVC runtime\n"
-            "* Fix a wrong-architecture DLL causing 0xc000007b at launch\n"
-            "**Full Changelog**: https://github.com/PhilemonChiro/perch/compare/v0.1.4...v0.2.0\n");
+            "## New\n"
+            "- Open several queries side by side in tabs, each keeping its own results\n"
+            "- Smart autocomplete for tables, columns and SQL keywords\n"
+            "## Fixed\n"
+            "- Queries no longer get stuck after an error\n");
         m_url = QStringLiteral("https://github.com/PhilemonChiro/perch/releases/tag/v0.2.0");
         m_available = true;
         emit updateChanged();
@@ -106,6 +108,17 @@ void UpdateChecker::checkForUpdates()
         m_name = o.value(QStringLiteral("name")).toString();
         m_notes = o.value(QStringLiteral("body")).toString();
         m_url = o.value(QStringLiteral("html_url")).toString();
+        m_assetUrl.clear();
+        m_assetSize = 0;
+        const QJsonArray assets = o.value(QStringLiteral("assets")).toArray();
+        for (const QJsonValue& a : assets) {
+            const QJsonObject ao = a.toObject();
+            if (ao.value(QStringLiteral("name")).toString() == assetName()) {
+                m_assetUrl = ao.value(QStringLiteral("browser_download_url")).toString();
+                m_assetSize = qint64(ao.value(QStringLiteral("size")).toDouble());
+                break;
+            }
+        }
 
         QSettings settings;
         const QString skipped = settings.value(QStringLiteral("updates/skippedVersion")).toString();
@@ -131,6 +144,148 @@ void UpdateChecker::skip()
     settings.setValue(QStringLiteral("updates/skippedVersion"), m_latest);
     m_available = false;
     emit updateChanged();
+}
+
+QString UpdateChecker::assetName()
+{
+#if defined(Q_OS_MACOS)
+    return QStringLiteral("Perch-macOS.dmg");
+#elif defined(Q_OS_WIN)
+    return QStringLiteral("Perch-Setup-x64.exe");
+#else
+    return QStringLiteral("Perch-x86_64.AppImage");
+#endif
+}
+
+void UpdateChecker::startDownload()
+{
+    if (m_download || m_assetUrl.isEmpty())
+        return;
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+                        + QStringLiteral("/updates");
+    QDir().mkpath(dir);
+    const QString path = dir + QLatin1Char('/') + m_latest + QLatin1Char('-') + assetName();
+    auto* file = new QFile(path + QStringLiteral(".part"), this);
+    m_downloadError.clear();
+    m_downloadedPath.clear();
+    m_progress = 0;
+    if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        m_downloadError = tr("Couldn't save the update: %1").arg(file->errorString());
+        delete file;
+        emit downloadChanged();
+        return;
+    }
+
+    QNetworkRequest req{QUrl(m_assetUrl)};
+    req.setRawHeader("User-Agent", "Perch-Updater");
+    req.setRawHeader("Accept", "application/octet-stream");
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    m_download = m_net->get(req);
+    emit downloadChanged();
+
+    connect(m_download, &QNetworkReply::readyRead, file, [this, file] {
+        file->write(m_download->readAll());
+    });
+    connect(m_download, &QNetworkReply::downloadProgress, this, [this](qint64 got, qint64 total) {
+        if (total <= 0)
+            total = m_assetSize;
+        if (total > 0) {
+            m_progress = double(got) / double(total);
+            emit downloadChanged();
+        }
+    });
+    connect(m_download, &QNetworkReply::finished, this, [this, file, path] {
+        QNetworkReply* reply = m_download;
+        m_download = nullptr;
+        reply->deleteLater();
+        file->write(reply->readAll());
+        file->close();
+        const bool ok = reply->error() == QNetworkReply::NoError
+                        && (m_assetSize <= 0 || file->size() == m_assetSize);
+        if (ok) {
+            QFile::remove(path);
+            if (file->rename(path)) {
+                m_downloadedPath = path;
+                m_progress = 1;
+            } else {
+                m_downloadError = tr("Couldn't save the update.");
+            }
+        } else {
+            if (reply->error() != QNetworkReply::OperationCanceledError)
+                m_downloadError = reply->error() != QNetworkReply::NoError
+                                      ? tr("Download failed: %1").arg(reply->errorString())
+                                      : tr("Download was incomplete. Please try again.");
+            file->remove();
+        }
+        file->deleteLater();
+        emit downloadChanged();
+    });
+}
+
+void UpdateChecker::cancelDownload()
+{
+    if (m_download)
+        m_download->abort();
+}
+
+void UpdateChecker::installAndRestart()
+{
+    if (m_downloadedPath.isEmpty())
+        return;
+    const QString pid = QString::number(QCoreApplication::applicationPid());
+    bool started = false;
+#if defined(Q_OS_MACOS)
+    // .../Perch.app/Contents/MacOS -> .../Perch.app
+    QDir bundle(QCoreApplication::applicationDirPath());
+    bundle.cdUp();
+    bundle.cdUp();
+    const QString app = bundle.absolutePath();
+    if (app.endsWith(QStringLiteral(".app"))
+        && QFileInfo(QFileInfo(app).absolutePath()).isWritable()) {
+        // After Perch exits: mount the DMG, copy the new bundle next to the old
+        // one, swap them, and relaunch. Falls back to opening the DMG.
+        const QString script = QStringLiteral(
+            "while kill -0 \"$1\" 2>/dev/null; do sleep 0.3; done\n"
+            "mnt=$(mktemp -d /tmp/perch-update.XXXXXX)\n"
+            "if ! hdiutil attach -nobrowse -quiet -mountpoint \"$mnt\" \"$2\"; then open \"$2\"; exit 1; fi\n"
+            "src=$(ls -d \"$mnt\"/*.app | head -n 1)\n"
+            "rm -rf \"$3.new\"\n"
+            "if [ -n \"$src\" ] && ditto \"$src\" \"$3.new\"; then\n"
+            "  rm -rf \"$3\" && mv \"$3.new\" \"$3\"\n"
+            "  xattr -dr com.apple.quarantine \"$3\" 2>/dev/null\n"
+            "fi\n"
+            "hdiutil detach -quiet \"$mnt\"\n"
+            "open \"$3\"\n");
+        started = QProcess::startDetached(QStringLiteral("/bin/sh"),
+            {QStringLiteral("-c"), script, QStringLiteral("perch-update"), pid, m_downloadedPath, app});
+    }
+    if (!started) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(m_downloadedPath));
+        return;
+    }
+#elif defined(Q_OS_WIN)
+    // Inno Setup closes the running app, installs over it, and relaunches.
+    started = QProcess::startDetached(m_downloadedPath,
+        {QStringLiteral("/SILENT"), QStringLiteral("/SUPPRESSMSGBOXES"), QStringLiteral("/NORESTART"),
+         QStringLiteral("/CLOSEAPPLICATIONS")});
+    if (!started)
+        return;
+#else
+    const QString appImage = qEnvironmentVariable("APPIMAGE");
+    if (appImage.isEmpty() || !QFileInfo(QFileInfo(appImage).absolutePath()).isWritable()) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(m_downloadedPath).absolutePath()));
+        return;
+    }
+    const QString script = QStringLiteral(
+        "while kill -0 \"$1\" 2>/dev/null; do sleep 0.3; done\n"
+        "chmod +x \"$2\" && mv -f \"$2\" \"$3\"\n"
+        "exec \"$3\"\n");
+    started = QProcess::startDetached(QStringLiteral("/bin/sh"),
+        {QStringLiteral("-c"), script, QStringLiteral("perch-update"), pid, m_downloadedPath, appImage});
+    if (!started)
+        return;
+#endif
+    QCoreApplication::quit();
 }
 
 int UpdateChecker::compareVersions(const QString& a, const QString& b)
