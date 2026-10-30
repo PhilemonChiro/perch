@@ -303,5 +303,6 @@ jobs:
             Perch-macOS.dmg
             Perch-Setup-x64.exe
             Perch-x86_64.AppImage
-          generate_release_notes: true
+          # Customer-facing notes shown in the in-app update dialog.
+          body_path: RELEASE_NOTES.md
           fail_on_unmatched_files: false

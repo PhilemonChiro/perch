@@ -1,11 +1,14 @@
 cmake_minimum_required(VERSION 3.21)
-project(Relay VERSION 0.1.5 LANGUAGES C CXX)
+project(Relay VERSION 0.1.6 LANGUAGES C CXX)
 
 # The app version string compiled into the binary for the in-app update check.
 # Defaults to the project version; CI overrides it from the release tag so a
 # tagged build reports its real version (and never prompts to "update" to the
 # version already running).
-set(PERCH_VERSION "${PROJECT_VERSION}" CACHE STRING "App version string")
+set(PERCH_VERSION "" CACHE STRING "App version override (defaults to the project version)")
+if(NOT PERCH_VERSION)
+    set(PERCH_VERSION "${PROJECT_VERSION}")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
