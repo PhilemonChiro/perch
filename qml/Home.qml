@@ -15,7 +15,7 @@ Item {
     signal toast(string message, string kind)
 
     property int refreshTick: 0
-    readonly property var recents: { root.refreshTick; return ConnectionStore.recent(8) }
+    readonly property var recents: { root.refreshTick; return ConnectionStore.recent(200) }
     Connections { target: ConnectionStore; function onChanged() { root.refreshTick++ } }
 
     // Recents split into typed groups (only non-empty groups are shown).
@@ -52,9 +52,10 @@ Item {
 
         ColumnLayout {
             id: content
-            width: Math.min(760, root.width - 64)
+            width: root.width - 96
             x: (root.width - width) / 2
-            readonly property int gridColumns: width > 620 ? 3 : 2
+            // Fill the width: as many ~260px columns as fit.
+            readonly property int gridColumns: Math.max(2, Math.floor(width / 210))
             y: Math.max(56, (root.height - implicitHeight) * 0.32)
             spacing: 0
 
@@ -138,8 +139,8 @@ Item {
                         id: g
                         Layout.fillWidth: true
                         columns: content.gridColumns
-                        columnSpacing: 12
-                        rowSpacing: 12
+                        columnSpacing: 8
+                        rowSpacing: 8
                         readonly property real cell: Math.floor((content.width - columnSpacing * (columns - 1)) / columns)
                         Repeater {
                             model: group.modelData.items
@@ -190,6 +191,8 @@ Item {
         property int delay: 0
         readonly property bool isSql: card.data_ && (card.data_.type === "mssql" || card.data_.type === "postgres")
         readonly property color kc: card.isSql ? Theme.engineColor(card.data_.type) : Theme.kindColor("rdp")
+        // Never-connected cards recede so live ones lead the eye.
+        readonly property bool everConnected: card.data_ && card.data_.lastConnected > 0
         implicitHeight: 96
         hoverEnabled: true
         focusPolicy: Qt.NoFocus
@@ -229,14 +232,15 @@ Item {
         }
 
         opacity: 0
-        transform: Translate { id: lift; y: card.hovered && !card.pressed ? -3 : 0
-            Behavior on y { NumberAnimation { duration: Theme.normal; easing.type: Theme.easing } } }
-        scale: pressed ? 0.98 : 1
-        Behavior on scale { NumberAnimation { duration: Theme.fast } }
+        transform: Translate { id: lift; y: card.hovered && !card.pressed ? -4 : 0
+            // Soft spring on lift for a tactile, Apple-like settle.
+            Behavior on y { SpringAnimation { spring: 3.4; damping: 0.42; mass: 0.7; epsilon: 0.05 } } }
+        scale: pressed ? 0.975 : (card.hovered ? 1.012 : 1)
+        Behavior on scale { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
         SequentialAnimation {
             running: true
             PauseAnimation { duration: 120 + card.delay }
-            NumberAnimation { target: card; property: "opacity"; to: 1; duration: Theme.slow }
+            NumberAnimation { target: card; property: "opacity"; to: card.everConnected ? 1 : 0.62; duration: Theme.slow }
         }
 
         background: Item {
@@ -251,19 +255,50 @@ Item {
             Rectangle {
                 id: cbg
                 anchors.fill: parent
-                radius: Theme.radiusLg
-                color: Theme.surface
+                radius: Theme.radius
                 border.color: card.hovered ? Qt.rgba(card.kc.r, card.kc.g, card.kc.b, 0.55) : Theme.border
                 Behavior on border.color { ColorAnimation { duration: Theme.normal } }
+                clip: true
+                // Soft material: a gentle top-lit gradient instead of a flat fill.
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: Qt.lighter(Theme.surface, Theme.dark ? 1.14 : 1.025) }
+                    GradientStop { position: 1.0; color: Theme.surface }
+                }
+                // Fine specular highlight along the top inner edge.
+                Rectangle {
+                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 1 }
+                    height: 1
+                    color: Qt.rgba(1, 1, 1, Theme.dark ? 0.06 : 0.7)
+                }
+
+                // Windows four-pane logo, faint in the corner of remote-desktop cards.
+                Item {
+                    visible: !card.isSql
+                    width: 104; height: 104
+                    anchors.right: parent.right; anchors.bottom: parent.bottom
+                    anchors.rightMargin: -26; anchors.bottomMargin: -26
+                    opacity: card.hovered ? 0.1 : 0.05
+                    Behavior on opacity { NumberAnimation { duration: Theme.normal } }
+                    readonly property real gap: 7
+                    readonly property real pane: (width - gap) / 2
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            width: parent.pane; height: parent.pane; radius: 2; color: card.kc
+                            x: (index % 2) * (parent.pane + parent.gap)
+                            y: Math.floor(index / 2) * (parent.pane + parent.gap)
+                        }
+                    }
+                }
             }
         }
         contentItem: ColumnLayout {
             spacing: 4
             RowLayout {
-                Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 14
+                Layout.leftMargin: 13; Layout.rightMargin: 13; Layout.topMargin: 11
                 spacing: 10
                 Rectangle {
-                    width: 30; height: 30; radius: 9
+                    width: 26; height: 26; radius: 7
                     color: card.hovered ? card.kc : Qt.rgba(card.kc.r, card.kc.g, card.kc.b, Theme.dark ? 0.16 : 0.12)
                     Behavior on color { ColorAnimation { duration: Theme.normal } }
                     Icon { anchors.centerIn: parent; name: card.isSql ? "database" : "monitor"; size: 15
@@ -284,13 +319,14 @@ Item {
                 Item { Layout.fillWidth: true }
                 Icon {
                     name: "arrow-right"; size: 14; color: card.kc
+                    Layout.alignment: Qt.AlignVCenter
                     opacity: card.hovered ? 1 : 0
                     transform: Translate { x: card.hovered ? 0 : -6; Behavior on x { NumberAnimation { duration: Theme.normal; easing.type: Theme.easing } } }
                     Behavior on opacity { NumberAnimation { duration: Theme.normal } }
                 }
             }
             Text {
-                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 4
+                Layout.fillWidth: true; Layout.leftMargin: 13; Layout.rightMargin: 13; Layout.topMargin: 3
                 text: card.data_ ? card.data_.name : ""
                 color: Theme.text
                 elide: Text.ElideRight
@@ -298,7 +334,7 @@ Item {
                 font.weight: Font.DemiBold
             }
             Text {
-                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.bottomMargin: 12
+                Layout.fillWidth: true; Layout.leftMargin: 13; Layout.rightMargin: 13; Layout.bottomMargin: 10
                 text: {
                     if (!card.data_) return ""
                     const who = card.isSql
@@ -321,7 +357,7 @@ Item {
         scale: pressed ? 0.98 : 1
         Behavior on scale { NumberAnimation { duration: Theme.fast } }
         background: Rectangle {
-            radius: Theme.radiusLg
+            radius: Theme.radius
             color: Theme.surface
             border.color: nc.hovered ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.55) : Theme.border
             Behavior on border.color { ColorAnimation { duration: Theme.normal } }
@@ -329,10 +365,10 @@ Item {
         contentItem: ColumnLayout {
             spacing: 4
             RowLayout {
-                Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 14
+                Layout.leftMargin: 13; Layout.rightMargin: 13; Layout.topMargin: 11
                 spacing: 10
                 Rectangle {
-                    width: 30; height: 30; radius: 9
+                    width: 26; height: 26; radius: 7
                     color: nc.hovered ? Theme.accent : Theme.accentSoft
                     Behavior on color { ColorAnimation { duration: Theme.normal } }
                     Icon {
@@ -353,14 +389,14 @@ Item {
                 }
             }
             Text {
-                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 4
+                Layout.fillWidth: true; Layout.leftMargin: 13; Layout.rightMargin: 13; Layout.topMargin: 3
                 text: qsTr("New connection")
                 color: Theme.text
                 font.pixelSize: Theme.fontMd
                 font.weight: Font.DemiBold
             }
             Text {
-                Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.bottomMargin: 12
+                Layout.fillWidth: true; Layout.leftMargin: 13; Layout.rightMargin: 13; Layout.bottomMargin: 10
                 text: qsTr("Add a server to connect fast")
                 color: Theme.textFaint
                 elide: Text.ElideRight
