@@ -362,13 +362,6 @@ void RdpSession::run()
     ep.ContextSize = sizeof(RelayContext);
     ep.ClientNew = RdpCallbacks::clientNew;
 
-    rdpContext* ctx = freerdp_client_context_new(&ep);
-    if (!ctx) {
-        post([this] { m_errorText = tr("Couldn’t initialise the RDP engine."); emit errorTextChanged(); setState(Failed); });
-        return;
-    }
-    reinterpret_cast<RelayContext*>(ctx)->self = this;
-
     QSize size;
     int scale;
     {
@@ -376,6 +369,23 @@ void RdpSession::run()
         size = m_viewport;
         scale = m_scale;
     }
+
+    // Connect, retrying once at a lowered TLS security level if the first
+    // attempt fails the TLS handshake. Some servers only present a weak or
+    // legacy RDP certificate (old key, SHA-1) that the default security level
+    // rejects outright — before we ever reach the certificate-trust prompt.
+    rdpContext* ctx = nullptr;
+    freerdp* instance = nullptr;
+    bool connected = false;
+    bool settingsInvalid = false;
+    UINT32 err = 0;
+    for (bool lowerTls = false;; lowerTls = true) {
+    ctx = freerdp_client_context_new(&ep);
+    if (!ctx) {
+        post([this] { m_errorText = tr("Couldn’t initialise the RDP engine."); emit errorTextChanged(); setState(Failed); });
+        return;
+    }
+    reinterpret_cast<RelayContext*>(ctx)->self = this;
 
     const QString hostArg = m_host.contains(':') ? '[' + m_host + ']' : m_host;
     std::vector<std::string> args = {
@@ -411,8 +421,9 @@ void RdpSession::run()
     const int parsed = freerdp_client_settings_parse_command_line(settings, int(argv.size()), argv.data(), FALSE);
     if (parsed < 0) {
         freerdp_client_context_free(ctx);
-        post([this] { m_errorText = tr("Invalid connection settings."); emit errorTextChanged(); setState(Failed); });
-        return;
+        ctx = nullptr;
+        settingsInvalid = true;
+        break;
     }
     // Set directly rather than via /p: so the secret never sits in argv.
     freerdp_settings_set_string(settings, FreeRDP_Password, m_password.toUtf8().constData());
@@ -467,6 +478,9 @@ void RdpSession::run()
         freerdp_settings_set_bool(settings, FreeRDP_GatewayHttpUseWebsockets, TRUE);
     }
 
+    if (lowerTls)
+        freerdp_settings_set_uint32(settings, FreeRDP_TlsSecLevel, 0);
+
     {
         QMutexLocker lock(&m_contextMutex);
         m_context = ctx;
@@ -475,11 +489,30 @@ void RdpSession::run()
     m_credentialsNeeded = false;
     freerdp_client_start(ctx);
 
-    freerdp* instance = ctx->instance;
-    const bool connected = !m_stop && freerdp_connect(instance);
+    instance = ctx->instance;
+    connected = !m_stop && freerdp_connect(instance);
+    if (connected)
+        break;
+
+    err = freerdp_get_last_error(ctx);
+    if (!lowerTls && !m_stop && err == FREERDP_ERROR_TLS_CONNECT_FAILED) {
+        { QMutexLocker lock(&m_contextMutex); m_live = false; }
+        freerdp_disconnect(instance);
+        freerdp_client_stop(ctx);
+        { QMutexLocker lock(&m_contextMutex); m_context = nullptr; }
+        freerdp_client_context_free(ctx);
+        ctx = nullptr;
+        continue; // retry once with the security level lowered
+    }
+    break;
+    } // for
+
+    if (settingsInvalid) {
+        post([this] { m_errorText = tr("Invalid connection settings."); emit errorTextChanged(); setState(Failed); });
+        return;
+    }
 
     if (!connected) {
-        const UINT32 err = freerdp_get_last_error(ctx);
         const bool aborted = m_stop;
         const bool hadPassword = !m_password.isEmpty();
         const bool credentialsNeeded = m_credentialsNeeded;
