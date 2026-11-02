@@ -240,6 +240,13 @@ ApplicationWindow {
     Connections {
         target: UpdateChecker
         function onCheckFinished(found) { if (found) updateDialog.open() }
+        // If the download finished (or failed) while the dialog was hidden,
+        // bring it back so the user can restart or retry.
+        function onDownloadChanged() {
+            if (!updateDialog.visible
+                    && (UpdateChecker.readyToInstall || UpdateChecker.downloadError !== ""))
+                updateDialog.open()
+        }
     }
 
     Toast {

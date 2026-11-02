@@ -89,8 +89,10 @@ Popup {
     readonly property bool busy: UpdateChecker.downloading
     readonly property bool ready: UpdateChecker.readyToInstall
     readonly property bool failed: UpdateChecker.downloadError !== ""
-    // Don't let a stray click dismiss the dialog mid-download.
-    closePolicy: busy ? Popup.NoAutoClose : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
+    // The download runs in the UpdateChecker singleton, so closing this dialog
+    // only hides it: the download keeps going and the dialog reopens when it's
+    // ready. So a click-outside or Escape is always allowed to dismiss.
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     Overlay.modal: Rectangle { color: Theme.overlay }
     background: Rectangle {
@@ -337,13 +339,15 @@ Popup {
                     onClicked: root.busy ? UpdateChecker.cancelDownload() : root.close()
                 }
                 PrimaryButton {
-                    visible: !root.busy
-                    text: root.ready ? qsTr("Restart now")
+                    text: root.busy ? qsTr("Continue in background")
+                        : root.ready ? qsTr("Restart now")
                         : root.failed ? qsTr("Try again")
                         : qsTr("Update now")
-                    iconName: root.ready ? "refresh" : "download"
+                    iconName: root.busy ? "" : root.ready ? "refresh" : "download"
                     onClicked: {
-                        if (root.ready)
+                        if (root.busy)
+                            root.close()
+                        else if (root.ready)
                             UpdateChecker.installAndRestart()
                         else if (UpdateChecker.canInstall)
                             UpdateChecker.startDownload()
