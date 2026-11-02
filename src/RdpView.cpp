@@ -125,6 +125,13 @@ void RdpView::setSession(RdpSession* s)
         // arrives (frameUpdated) so a resized/empty buffer never flashes on screen.
         connect(m_session, &RdpSession::remoteSizeChanged, this, [this] { update(); });
         connect(m_session->clipboard(), &RdpClipboard::pasteReady, this, &RdpView::injectPaste);
+        // Re-assert the real window size once connected: at connect time the
+        // viewport may still be the default, and dynamic-resolution servers only
+        // resize when we send the layout.
+        connect(m_session, &RdpSession::stateChanged, this, [this] {
+            if (m_session && m_session->state() == RdpSession::Connected)
+                m_resizeDebounce.start();
+        });
         pushViewport();
     }
     m_dirty = true;
@@ -138,8 +145,11 @@ QRectF RdpView::targetRect() const
         return {};
     const qreal dpr = window() ? window()->effectiveDevicePixelRatio() : 1.0;
     const QSizeF remote = QSizeF(m_session->remoteSize()) / dpr;
-    // Exact 1:1 when the remote matches the viewport, otherwise aspect-fit.
-    const qreal s = std::min({1.0, width() / remote.width(), height() / remote.height()});
+    // Fit the remote to the view, keeping its aspect ratio. Dynamic-resolution
+    // servers resize the desktop to match, so this is 1:1; servers that can't
+    // (desktop stuck at its connect resolution) get scaled up to fill instead of
+    // sitting small in the middle. Linear filtering keeps the upscale smooth.
+    const qreal s = std::min(width() / remote.width(), height() / remote.height());
     const QSizeF sz = remote * s;
     return QRectF(QPointF((width() - sz.width()) / 2, (height() - sz.height()) / 2), sz);
 }
