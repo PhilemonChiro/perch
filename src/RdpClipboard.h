@@ -144,6 +144,8 @@ signals:
     void transferChanged();
     // The server now holds the item to paste; the view sends Ctrl+V.
     void pasteReady(const QPointF& remotePos, bool click);
+    // A lazy (paste-in-Finder) download finished or failed.
+    void lazySettled();
 
 private:
     friend struct ClipCallbacks;
@@ -165,7 +167,8 @@ private:
     void offer(const ClipItem& item, bool paste, const QPointF& pos, bool click);
     void applyRemote(const ClipItem& item);
     void remoteFilesListed(std::vector<RemoteEntry> entries);
-    void startDownload();
+    void startDownload(std::vector<RemoteEntry> entries, bool lazy);
+    QStringList provideLazy(quint64 gen);
     void notAvailable();
 
     // Worker side (m_mx held).
@@ -198,6 +201,13 @@ private:
     ClipItem m_system; // last Mac clipboard snapshot
     std::vector<RemoteEntry> m_pendingFiles; // listed but not downloaded yet
     QStringList m_saved;                     // last downloaded top-level paths
+    // Server files offered on the Mac pasteboard, fetched when another app pastes.
+    enum LazyState { LazyIdle, LazyLoading, LazyDone };
+    std::vector<RemoteEntry> m_lazyEntries;
+    quint64 m_lazyGen = 0;
+    LazyState m_lazyState = LazyIdle;
+    QStringList m_lazyPaths;
+    QString m_lazyRoot;
     QTimer m_availTimer;
     QTimer m_stall; // ends a transfer the server silently abandoned
 
@@ -225,6 +235,7 @@ private:
     // Remote -> local download (worker).
     struct Download {
         bool active = false;
+        bool lazy = false; // fetched for a paste: hand the paths over, don't touch the clipboard
         std::vector<RemoteEntry> entries;
         QString root;
         size_t index = 0;

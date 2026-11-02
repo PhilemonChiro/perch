@@ -2,6 +2,37 @@
 
 #import <AppKit/AppKit.h>
 
+// Serves the file URLs of a lazy offer; one instance per offer (manual retain).
+@interface PerchLazyFiles : NSObject <NSPasteboardItemDataProvider> {
+@public
+    std::function<QStringList()> provide;
+}
+@end
+
+namespace {
+PerchLazyFiles* gProvider = nil;
+NSInteger gChangeCount = -1;
+quintptr gOrigin = 0;
+} // namespace
+
+@implementation PerchLazyFiles
+- (void)pasteboard:(NSPasteboard*)pasteboard item:(NSPasteboardItem*)item provideDataForType:(NSPasteboardType)type
+{
+    if (self != gProvider || [NSRunningApplication currentApplication].isActive)
+        return; // superseded, or read while Perch is in front (a clipboard manager)
+    const NSUInteger i = [pasteboard.pasteboardItems indexOfObject:item];
+    const QStringList paths = provide(); // blocks (nested event loop) until the files are here
+    if (i == NSNotFound || i >= NSUInteger(paths.size()))
+        return;
+    [item setString:[NSURL fileURLWithPath:paths.at(int(i)).toNSString()].absoluteString forType:type];
+}
+- (void)pasteboardFinishedWithDataProvider:(NSPasteboard*)pasteboard
+{
+    if (self == gProvider)
+        gOrigin = 0;
+}
+@end
+
 namespace MacPasteboard {
 
 bool isConcealed()
@@ -29,6 +60,38 @@ void revealInFinder(const QStringList& paths)
             [urls addObject:[NSURL fileURLWithPath:p.toNSString()]];
         [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:urls];
     }
+}
+
+bool offerLazyFiles(const QStringList& names, quintptr origin, std::function<QStringList()> provide)
+{
+    @autoreleasepool {
+        if (names.isEmpty())
+            return false;
+        auto* provider = [[PerchLazyFiles alloc] init];
+        provider->provide = std::move(provide);
+        NSMutableArray<NSPasteboardItem*>* items = [NSMutableArray arrayWithCapacity:NSUInteger(names.size())];
+        for (qsizetype i = 0; i < names.size(); ++i) {
+            NSPasteboardItem* item = [[[NSPasteboardItem alloc] init] autorelease];
+            [item setDataProvider:provider forTypes:@[ NSPasteboardTypeFileURL ]];
+            [items addObject:item];
+        }
+        NSPasteboard* pb = [NSPasteboard generalPasteboard];
+        [pb clearContents];
+        PerchLazyFiles* old = gProvider;
+        gProvider = provider;
+        gOrigin = origin;
+        const bool ok = [pb writeObjects:items];
+        gChangeCount = pb.changeCount;
+        [old release];
+        if (!ok)
+            gOrigin = 0;
+        return ok;
+    }
+}
+
+quintptr lazyOrigin()
+{
+    return gOrigin && [NSPasteboard generalPasteboard].changeCount == gChangeCount ? gOrigin : 0;
 }
 
 } // namespace MacPasteboard

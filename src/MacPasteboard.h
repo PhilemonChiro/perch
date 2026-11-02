@@ -2,6 +2,8 @@
 
 #include <QStringList>
 
+#include <functional>
+
 // Small bridges to AppKit for things Qt does not expose.
 namespace MacPasteboard {
 
@@ -15,5 +17,17 @@ bool reduceMotion();
 
 // Opens Finder with the given files selected.
 void revealInFinder(const QStringList& paths);
+
+// Puts one file item per name on the general pasteboard without the files
+// themselves. Nothing is fetched until another app reads an item while Perch is
+// in the background (a paste in Finder); then `provide` runs on the main thread
+// and returns the local paths, in `names` order (empty on failure). Clipboard
+// managers that read the moment the server copies, while Perch is in front,
+// get nothing. Returns false where this isn't supported.
+bool offerLazyFiles(const QStringList& names, quintptr origin, std::function<QStringList()> provide);
+
+// The origin given to offerLazyFiles while its items are still on the
+// pasteboard, else 0. Perch must not read those items itself.
+quintptr lazyOrigin();
 
 } // namespace MacPasteboard

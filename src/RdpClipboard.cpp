@@ -8,14 +8,17 @@
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
+#include <QEventLoop>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QLocale>
 #include <QMimeData>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTextDocumentFragment>
 #include <QUrl>
+#include <QUuid>
 #include <QtEndian>
 
 #include <freerdp/client/cliprdr.h>
@@ -704,6 +707,10 @@ ClipItem RdpClipboard::captureSystem(bool record)
     const QMimeData* m = QGuiApplication::clipboard()->mimeData();
     if (!m)
         return it;
+    if (const quintptr o = MacPasteboard::lazyOrigin()) {
+        it.origin = o; // lazily offered server files: reading them would start the download
+        return it;
+    }
     if (MacPasteboard::isConcealed()) {
         it.concealed = true;
         return it;
@@ -729,8 +736,8 @@ ClipItem RdpClipboard::captureSystem(bool record)
 void RdpClipboard::setLocal(const ClipItem& item)
 {
     m_system = item;
-    if (item.origin == quintptr(this) || !allowsToServer(m_mode))
-        return; // our own server's data coming back, or sync to the server is off
+    if (item.origin == quintptr(this) || (item.origin && item.isEmpty()) || !allowsToServer(m_mode))
+        return; // our own server's data coming back, nothing to offer, or sync to the server is off
     if (item.concealed) {
         offer(ClipItem{}, false, {}, false);
         setActivity({{"kind", "concealed"}, {"dir", "toServer"}, {"title", tr("Not shared")},
@@ -847,8 +854,10 @@ void RdpClipboard::cancelTransfer()
 
 void RdpClipboard::download()
 {
-    if (!m_pendingFiles.empty() && !m_busy)
-        startDownload();
+    if (!m_pendingFiles.empty() && !m_busy) {
+        startDownload(std::move(m_pendingFiles), false);
+        m_pendingFiles.clear();
+    }
 }
 
 void RdpClipboard::reveal()
@@ -928,22 +937,82 @@ void RdpClipboard::remoteFilesListed(std::vector<RemoteEntry> entries)
     }
     if (!files && entries.empty())
         return;
+    // Copying files on the server is often not meant for the Mac: put them on the
+    // Mac clipboard as promises fetched only when pasted, and offer a Download.
+    QStringList tops;
+    for (const RemoteEntry& e : entries) {
+        const QString top = e.rel.section('/', 0, 0);
+        if (!top.isEmpty() && !tops.contains(top))
+            tops << top;
+    }
+    m_lazyEntries = entries;
+    m_lazyState = LazyIdle;
+    m_lazyPaths.clear();
+    const quint64 gen = ++m_lazyGen;
+    const bool lazy = allowsToMac(m_mode)
+                      && MacPasteboard::offerLazyFiles(tops, quintptr(this), [guard = QPointer<RdpClipboard>(this), gen] {
+                             return guard ? guard->provideLazy(gen) : QStringList();
+                         });
     m_pendingFiles = std::move(entries);
     if (m_busy)
         return; // a transfer is running; the user can download this one after
-    // Copying files on the server is often not meant for the Mac: offer them and
-    // transfer only when the user asks.
+    QString detail = known ? QLocale().formattedDataSize(total) : QString();
+    if (lazy)
+        detail += (detail.isEmpty() ? QString() : QStringLiteral(" · ")) + tr("Paste in Finder to copy");
     setActivity({{"kind", "files"}, {"dir", "toMac"}, {"title", tr("%n file(s) on the server", nullptr, files)},
-                 {"detail", known ? QLocale().formattedDataSize(total) : QString()}, {"action", "download"}});
+                 {"detail", detail}, {"action", "download"}});
 }
 
-void RdpClipboard::startDownload()
+QStringList RdpClipboard::provideLazy(quint64 gen)
 {
-    std::vector<RemoteEntry> entries = std::move(m_pendingFiles);
-    m_pendingFiles.clear();
-    QString server = m_session->title();
-    server.replace(QRegularExpression(QStringLiteral("[/\\\\:]")), QStringLiteral("_"));
-    const QString root = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + "/Perch/" + server;
+    if (gen != m_lazyGen || m_lazyEntries.empty())
+        return {};
+    if (m_lazyState == LazyIdle) {
+        if (m_busy || !m_cliprdr)
+            return {}; // another transfer is running, or the session is gone
+        startDownload(m_lazyEntries, true);
+    }
+    if (m_lazyState == LazyLoading) {
+        // The pasting app waits on this call; keep Perch responsive meanwhile and
+        // give up if the server stops sending.
+        QEventLoop loop;
+        connect(this, &RdpClipboard::lazySettled, &loop, &QEventLoop::quit);
+        QTimer watchdog;
+        watchdog.setInterval(20000);
+        qint64 last = -1;
+        connect(&watchdog, &QTimer::timeout, &loop, [&] {
+            qint64 done;
+            {
+                QMutexLocker lock(&m_mx);
+                done = m_dl.done;
+            }
+            if (done == last) {
+                cancelTransfer();
+                m_lazyState = LazyIdle;
+                loop.quit();
+            }
+            last = done;
+        });
+        watchdog.start();
+        loop.exec();
+    }
+    return gen == m_lazyGen && m_lazyState == LazyDone ? m_lazyPaths : QStringList();
+}
+
+void RdpClipboard::startDownload(std::vector<RemoteEntry> entries, bool lazy)
+{
+    QString root;
+    if (lazy) {
+        // A fresh folder per paste keeps the server's names; the paster copies from it.
+        if (!m_lazyRoot.isEmpty())
+            QDir(m_lazyRoot).removeRecursively();
+        root = m_lazyRoot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/paste/"
+                            + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    } else {
+        QString server = m_session->title();
+        server.replace(QRegularExpression(QStringLiteral("[/\\\\:]")), QStringLiteral("_"));
+        root = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) + "/Perch/" + server;
+    }
     if (!QDir().mkpath(root)) {
         setActivity({{"kind", "error"}, {"dir", "toMac"}, {"title", tr("Couldn’t save files")},
                      {"detail", tr("%1 isn’t writable.").arg(root)}});
@@ -976,9 +1045,15 @@ void RdpClipboard::startDownload()
             total += qMax<qint64>(0, e.size);
         }
     }
-    m_saved = tops;
+    if (lazy) {
+        m_lazyPaths = tops;
+        m_lazyState = LazyLoading;
+    } else {
+        m_saved = tops;
+    }
     {
         QMutexLocker lock(&m_mx);
+        m_dl.lazy = lazy;
         m_dl.entries = std::move(entries);
         m_dl.root = root;
         m_dl.index = 0;
@@ -1197,6 +1272,8 @@ void RdpClipboard::finishFetch()
     } else if (!m_incoming.isEmpty()) {
         post([this, item = m_incoming] {
             m_pendingFiles.clear(); // the server clipboard no longer holds those files
+            m_lazyEntries.clear();
+            ++m_lazyGen;
             applyRemote(item);
         });
     }
@@ -1246,6 +1323,15 @@ void RdpClipboard::dlNext()
     int count = 0;
     for (const RemoteEntry& e : dl.entries)
         count += (!e.dir && !e.rel.isEmpty()) ? 1 : 0;
+    if (dl.lazy) {
+        post([this, count] {
+            setTransfer(false, 1, QString(), QString());
+            m_lazyState = LazyDone;
+            setActivity({{"kind", "info"}, {"dir", "toMac"}, {"title", tr("Pasted %n file(s)", nullptr, count)}});
+            emit lazySettled();
+        });
+        return;
+    }
     post([this, bytes, count] {
         setTransfer(false, 1, QString(), QString());
         ClipItem it;
@@ -1291,7 +1377,12 @@ void RdpClipboard::dlAbort(const QString& error)
     m_dl.active = false;
     m_dl.sizing = false;
     m_dlStart = false;
-    post([this, error] {
+    const bool lazy = m_dl.lazy;
+    post([this, error, lazy] {
+        if (lazy && m_lazyState == LazyLoading) {
+            m_lazyState = LazyIdle; // a later paste can try again
+            emit lazySettled();
+        }
         setTransfer(false, 0, QString(), QString());
         if (!error.isEmpty())
             setActivity({{"kind", "error"}, {"dir", "toMac"}, {"title", tr("Transfer stopped")}, {"detail", error}});

@@ -15,4 +15,7 @@ void revealInFinder(const QStringList& paths)
         QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(paths.first()).absolutePath()));
 }
 
+bool offerLazyFiles(const QStringList&, quintptr, std::function<QStringList()>) { return false; }
+quintptr lazyOrigin() { return 0; }
+
 } // namespace MacPasteboard
