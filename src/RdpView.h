@@ -46,8 +46,6 @@ private:
     QPointF toRemote(const QPointF& p) const;
     void pushViewport();
     void releaseAllKeys();
-    bool translateMacKey(QKeyEvent* e);
-    void liftModifiers(bool keepCtrl);
     void restoreLifted();
     void tap(quint32 sc);
     void injectPaste(const QPointF& remotePos, bool click);
@@ -56,12 +54,10 @@ private:
     bool m_dirty = true;
     QTimer m_resizeDebounce;
     QSet<quint32> m_pressed;
-    // Modifiers still held locally but released on the remote for a mapped chord
-    // (e.g. Cmd's Ctrl lifted for Cmd+Left -> Home). Re-pressed lazily before the
-    // next ordinary key; their local release is then not sent again.
+    // Modifiers still held locally but released on the remote to send a clean
+    // chord (e.g. lifted for a Ctrl+V paste). Re-pressed lazily before the next
+    // ordinary key; their local release is then not sent again.
     QSet<quint32> m_lifted;
-    // Keys consumed by a mapping (sent as a tap); their release is swallowed.
-    QSet<int> m_mappedKeys;
     int m_wheelAccumY = 0;
     int m_wheelAccumX = 0;
 };

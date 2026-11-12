@@ -11,10 +11,8 @@
 namespace {
 
 // Maps a Qt key event to an RDP scancode (with the KBDEXT bit for extended keys).
-// With `cmdAsCtrl`, macOS Cmd becomes Right Ctrl: a distinct scancode from the
-// physical Control key, so releasing one never lifts the other, and the Windows
-// key (Start menu) is never sent.
-quint32 rdpScancode(const QKeyEvent* e, bool cmdAsCtrl)
+// Keys are sent through unchanged; no Mac-to-Windows remapping.
+quint32 rdpScancode(const QKeyEvent* e)
 {
 #if defined(Q_OS_WIN)
     // Qt on Windows reports the PC scancode with the extended bit at 0x100.
@@ -28,14 +26,7 @@ quint32 rdpScancode(const QKeyEvent* e, bool cmdAsCtrl)
 #endif
     if (!vk)
         return 0;
-    const quint32 sc = GetVirtualScanCodeFromVirtualKeyCode(vk, WINPR_KBD_TYPE_IBM_ENHANCED);
-#if defined(Q_OS_MACOS)
-    if (cmdAsCtrl && (sc == RDP_SCANCODE_LWIN || sc == RDP_SCANCODE_RWIN))
-        return RDP_SCANCODE_RCONTROL;
-#else
-    Q_UNUSED(cmdAsCtrl);
-#endif
-    return sc;
+    return GetVirtualScanCodeFromVirtualKeyCode(vk, WINPR_KBD_TYPE_IBM_ENHANCED);
 #endif
 }
 
@@ -59,7 +50,7 @@ bool isAppShortcut(const QKeyEvent* e)
     const auto m = e->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier);
 #if defined(Q_OS_MACOS)
     // Qt maps Cmd to ControlModifier (and Control to MetaModifier) on macOS.
-    // Every other Cmd combo goes to the remote (as Ctrl, or Win when Cmd-as-Ctrl is off).
+    // Every other Cmd combo goes to the remote (as the Windows key).
     const int k = e->key();
     if (m == (Qt::ControlModifier | Qt::ShiftModifier) && k == Qt::Key_V)
         return true; // clipboard history
@@ -240,19 +231,7 @@ void RdpView::keyPressEvent(QKeyEvent* e)
 {
     if (!m_session)
         return;
-#if defined(Q_OS_MACOS)
-    if (translateMacKey(e)) {
-        e->accept();
-        return;
-    }
-#endif
-    // A mapped key whose modifier was let go keeps auto-repeating; its release
-    // is swallowed, so don't start a real press now.
-    if (e->isAutoRepeat() && m_mappedKeys.contains(e->key())) {
-        e->accept();
-        return;
-    }
-    const quint32 sc = rdpScancode(e, m_session->cmdAsCtrl());
+    const quint32 sc = rdpScancode(e);
     if (!sc) {
         e->ignore();
         return;
@@ -268,11 +247,7 @@ void RdpView::keyReleaseEvent(QKeyEvent* e)
 {
     if (!m_session || e->isAutoRepeat())
         return;
-    if (m_mappedKeys.remove(e->key())) {
-        e->accept();
-        return;
-    }
-    const quint32 sc = rdpScancode(e, m_session->cmdAsCtrl());
+    const quint32 sc = rdpScancode(e);
     if (!sc)
         return;
     if (m_lifted.remove(sc)) { // already released on the remote
@@ -282,61 +257,6 @@ void RdpView::keyReleaseEvent(QKeyEvent* e)
     m_session->sendKey(false, false, sc);
     m_pressed.remove(sc);
     e->accept();
-}
-
-// macOS text-navigation chords, translated to their Windows equivalents and sent
-// as a single tap (so repeat and release can't leave anything stuck):
-//   Cmd+Left/Right -> Home/End        Cmd+Up/Down -> Ctrl+Home/End
-//   Opt+Left/Right -> Ctrl+Left/Right Opt+Backspace/Delete -> Ctrl+Backspace/Delete
-// Shift stays held, so the Shift+ variants select.
-bool RdpView::translateMacKey(QKeyEvent* e)
-{
-    const auto mods = e->modifiers();
-    const bool cmd = mods & Qt::ControlModifier; // Cmd on macOS
-    const bool opt = mods & Qt::AltModifier;
-    if ((mods & Qt::MetaModifier) || cmd == opt) // physical Control, or none / both
-        return false;
-    if (cmd && !m_session->cmdAsCtrl())
-        return false;
-    quint32 key = 0;
-    bool ctrl = false;
-    switch (e->key()) {
-    case Qt::Key_Left: key = cmd ? RDP_SCANCODE_HOME : RDP_SCANCODE_LEFT; ctrl = opt; break;
-    case Qt::Key_Right: key = cmd ? RDP_SCANCODE_END : RDP_SCANCODE_RIGHT; ctrl = opt; break;
-    case Qt::Key_Up: if (cmd) { key = RDP_SCANCODE_HOME; ctrl = true; } break;
-    case Qt::Key_Down: if (cmd) { key = RDP_SCANCODE_END; ctrl = true; } break;
-    case Qt::Key_Backspace: if (opt) { key = RDP_SCANCODE_BACKSPACE; ctrl = true; } break;
-    case Qt::Key_Delete: if (opt) { key = RDP_SCANCODE_DELETE; ctrl = true; } break;
-    default: break;
-    }
-    if (!key)
-        return false;
-    const bool tempCtrl = ctrl && !m_pressed.contains(RDP_SCANCODE_RCONTROL)
-                          && !m_pressed.contains(RDP_SCANCODE_LCONTROL);
-    // Ctrl goes down before Alt is lifted, so the lone Alt release can't
-    // activate the remote window's menu bar.
-    if (tempCtrl)
-        m_session->sendKey(true, false, RDP_SCANCODE_LCONTROL);
-    liftModifiers(ctrl);
-    tap(key);
-    if (tempCtrl)
-        m_session->sendKey(false, false, RDP_SCANCODE_LCONTROL);
-    m_mappedKeys.insert(e->key());
-    return true;
-}
-
-// Releases Alt (and Cmd's Ctrl unless `keepCtrl`) on the remote while they stay
-// held locally.
-void RdpView::liftModifiers(bool keepCtrl)
-{
-    for (quint32 sc : {RDP_SCANCODE_LMENU, RDP_SCANCODE_RMENU, RDP_SCANCODE_RCONTROL}) {
-        if (keepCtrl && sc == RDP_SCANCODE_RCONTROL)
-            continue;
-        if (!m_pressed.remove(sc))
-            continue;
-        m_session->sendKey(false, false, sc);
-        m_lifted.insert(sc);
-    }
 }
 
 void RdpView::restoreLifted()
@@ -389,7 +309,6 @@ void RdpView::releaseAllKeys()
             m_session->sendKey(false, false, sc);
     m_pressed.clear();
     m_lifted.clear();
-    m_mappedKeys.clear();
 }
 
 void RdpView::focusOutEvent(QFocusEvent* e)

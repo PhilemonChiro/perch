@@ -48,7 +48,6 @@ class RdpSession : public QObject
     Q_PROPERTY(bool remounting READ remounting NOTIFY remountingChanged)
     Q_PROPERTY(QString credentialId READ credentialId NOTIFY credentialIdChanged)
     Q_PROPERTY(RdpClipboard* clipboard READ clipboard CONSTANT)
-    Q_PROPERTY(bool cmdAsCtrl READ cmdAsCtrl CONSTANT)
 
 public:
     enum State { Idle, NeedsCredentials, Connecting, VerifyingCertificate, Connected, Disconnected, Failed };
@@ -107,10 +106,6 @@ public:
     // links) for this connection. Off by default: TCP-only is the safe default
     // and UDP is extra attack surface. Set before the first connect.
     void setUseUdp(bool on) { m_useUdp = on; }
-    // macOS: send Cmd as Ctrl (Cmd+C -> Ctrl+C) instead of the Windows key.
-    // Set before the view first sees the session.
-    void setCmdAsCtrl(bool on) { m_cmdAsCtrl = on; }
-    bool cmdAsCtrl() const { return m_cmdAsCtrl; }
     RdpClipboard* clipboard() const { return m_clip; }
     // Wakes the worker to process queued GUI requests (resize, clipboard).
     void wake();
@@ -180,7 +175,6 @@ private:
     QString m_username, m_domain, m_password, m_sharedFolder, m_gateway, m_credentialId;
     bool m_remember = false;
     bool m_useUdp = false;
-    bool m_cmdAsCtrl = true;
     State m_state = Idle;
     QString m_statusText, m_errorText;
     int m_stage = 0;
